@@ -1,0 +1,24 @@
+# Build outputs
+/x-ui
+/xray-linux-*
+/bin/xray-linux-*
+
+# Release packages
+/releases/*.zip
+/releases/*.tar.gz
+
+# Runtime data
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.pid
+
+# Test/cache outputs
+*.test
+coverage.out
+*.prof
+.cache/
+/tmp/
+/dist/
+/build/
