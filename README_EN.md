@@ -41,17 +41,17 @@ If you need more language options ,please open a issue and let me know that
 - support telegram bot notify and control
 - more functions in control menu  
 
-for more detailed usages,plz see [WIKI](https://github.com/torr9522/n-ui/wiki)
+for more detailed usages,plz see [WIKI](https://github.com/torr9522/n3-ui/wiki)
 
 # Installation
 Make sure your system `bash` and `curl` and `network` are ready,here we go
 
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n-ui/n-ui/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install.sh)
 ```  
 For English Users,please use the following command to install English supported version:  
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n-ui/n-ui/install_en.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install_en.sh)
 ``` 
 
 ## Shortcut  
@@ -117,4 +117,4 @@ if you want to purchase some virtual servers,you can purchase by my aff link:
 
 ## Stargazers over time
 
-[![Stargazers over time](https://starchart.cc/torr9522/n-ui.svg)](https://starchart.cc/torr9522/n-ui)
+[![Stargazers over time](https://starchart.cc/torr9522/n3-ui.svg)](https://starchart.cc/torr9522/n3-ui)

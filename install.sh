@@ -7,11 +7,11 @@ plain='\033[0m'
 
 cur_dir=$(pwd)
 INSTALL_SCRIPT_DIR=""
-XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n2-ui/main}"
-XUI_REPO_URL="${XUI_REPO_URL:-https://github.com/torr9522/n2-ui.git}"
+XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n3-ui/main}"
+XUI_REPO_URL="${XUI_REPO_URL:-https://github.com/torr9522/n3-ui.git}"
 XUI_REPO_BRANCH="${XUI_REPO_BRANCH:-main}"
 INSTALL_MODE="${INSTALL_MODE:-source}"
-XUI_RELEASES_BASE="${XUI_RELEASES_BASE:-${XUI_RELEASES_RAW_BASE:-https://github.com/torr9522/n2-ui/releases/download/n2-ui-assets}}"
+XUI_RELEASES_BASE="${XUI_RELEASES_BASE:-${XUI_RELEASES_RAW_BASE:-https://github.com/torr9522/n3-ui/releases/download/n3-ui-assets}}"
 
 resolve_install_script_dir() {
     local script_source="${BASH_SOURCE[0]:-$0}"
@@ -544,7 +544,7 @@ install_x-ui() {
     local url
     local local_source_dir=""
     if [[ $# -eq 0 || -z "${1:-}" ]]; then
-        last_version="n2-ui-source"
+        last_version="n3-ui-source"
     else
         last_version="$1"
     fi
@@ -569,18 +569,18 @@ install_x-ui() {
     elif [[ "${INSTALL_MODE}" == "source" ]]; then
         local build_root
         local source_dir
-        build_root="$(mktemp -d /tmp/n2-ui-build.XXXXXX)"
+        build_root="$(mktemp -d /tmp/n3-ui-build.XXXXXX)"
         source_dir="${build_root}/repo"
         echo -e "install source: ${XUI_REPO_URL} (${XUI_REPO_BRANCH})"
         install_build_toolchain || error_exit "编译依赖安装失败。"
         ensure_go_toolchain || error_exit "Go 工具链安装失败。"
         if ! git clone --depth 1 --branch "${XUI_REPO_BRANCH}" "${XUI_REPO_URL}" "${source_dir}"; then
             rm -rf "${build_root}"
-            error_exit "clone n2-ui 源码失败。"
+            error_exit "clone n3-ui 源码失败。"
         fi
         cd "${source_dir}" || {
             rm -rf "${build_root}"
-            error_exit "无法进入 n2-ui 源码目录。"
+            error_exit "无法进入 n3-ui 源码目录。"
         }
         if ! CGO_ENABLED=1 GO111MODULE=on /usr/local/bin/go build -o x-ui .; then
             rm -rf "${build_root}"
@@ -592,7 +592,7 @@ install_x-ui() {
         }
         if ! cp -a "${source_dir}" /usr/local/x-ui; then
             rm -rf "${build_root}"
-            error_exit "复制 n2-ui 源码到 /usr/local/x-ui 失败。"
+            error_exit "复制 n3-ui 源码到 /usr/local/x-ui 失败。"
         fi
         rm -rf /usr/local/x-ui/.git
         rm -rf "${build_root}"
@@ -605,7 +605,7 @@ install_x-ui() {
         package_file="/usr/local/x-ui-linux-${package_arch}.tar.gz"
         echo -e "install source: ${url}"
         if ! download_file "${package_file}" "${url}"; then
-            error_exit "download failed, please check n2-ui release assets"
+            error_exit "download failed, please check n3-ui release assets"
         fi
         if ! tar -tzf "${package_file}" >/dev/null 2>&1; then
             error_exit "下载的 x-ui 安装包损坏：${package_file}"

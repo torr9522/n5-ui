@@ -3,15 +3,15 @@
 ## Clone
 
 ```bash
-git clone git@github.com:torr9522/n2-ui.git
-cd n2-ui
+git clone git@github.com:torr9522/n3-ui.git
+cd n3-ui
 ```
 
 如使用 HTTPS：
 
 ```bash
-git clone https://github.com/torr9522/n2-ui.git
-cd n2-ui
+git clone https://github.com/torr9522/n3-ui.git
+cd n3-ui
 ```
 
 ## Build
@@ -56,16 +56,16 @@ grep -aE "复制自定义分享链接|自定义二维码|留空则使用原始�
 9. 执行 reboot。
 10. 验证 x-ui、Xray、入站端口和面板登录均恢复正常。
 
-## Avoid Pushing To n-ui
+## Avoid Pushing To Other Repositories
 
-本项目 remote 必须指向 `torr9522/n2-ui`。
+本项目 remote 必须指向 `torr9522/n3-ui`。
 
 ```bash
 git remote -v
 git branch --show-current
 ```
 
-推送前确认不要出现 `torr9522/n-ui`。
+推送前确认不要出现 `torr9522/n-ui` 或 `torr9522/n2-ui`。
 
 ## Feature Branch
 
