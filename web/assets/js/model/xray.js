@@ -839,7 +839,6 @@ class Inbound extends XrayCommonClass {
     canEnableXTls() {
         switch (this.protocol) {
             case Protocols.VLESS:
-            case Protocols.TROJAN:
                 break;
             default:
                 return false;

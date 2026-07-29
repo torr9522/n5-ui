@@ -37,6 +37,7 @@
             }
             this.confirm = confirm;
             this.visible = true;
+            certificateStore.load(true);
         },
         close() {
             inModal.visible = false;
@@ -84,6 +85,11 @@
             }
         },
         methods: {
+            tlsChange(checked) {
+                if (checked) {
+                    certificateStore.load(true);
+                }
+            },
             selectTlsCertificate(value) {
                 const cert = certificateStore.findByValue(value);
                 if (!cert) {

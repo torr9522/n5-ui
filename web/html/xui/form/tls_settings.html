@@ -2,11 +2,8 @@
 <!-- tls enable -->
 <a-form layout="inline" v-if="inbound.canSetTls()">
     <a-form-item label="tls">
-        <a-switch v-model="inbound.tls">
+        <a-switch v-model="inbound.tls" @change="tlsChange">
         </a-switch>
-    </a-form-item>
-    <a-form-item v-if="inbound.canEnableXTls()" label="xtls">
-        <a-switch v-model="inbound.xtls"></a-switch>
     </a-form-item>
 </a-form>
 
@@ -28,7 +25,7 @@
             <a-select allow-clear style="width: 260px"
                       :loading="certificateStore.loading"
                       placeholder="选择证书"
-                      @dropdownVisibleChange="open => open && certificateStore.load()"
+                      @dropdown-visible-change="open => open && certificateStore.load()"
                       @change="selectTlsCertificate">
                 <a-select-option v-for="cert in certificateStore.validCertificates"
                                  :key="certificateStore.getValue(cert)"

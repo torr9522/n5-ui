@@ -288,7 +288,7 @@ const certificateStore = {
     loading: false,
     loaded: false,
     async load(force=false) {
-        if (this.loaded && !force) {
+        if (this.loaded && !force && this.validCertificates.length > 0) {
             return;
         }
         this.loading = true;
