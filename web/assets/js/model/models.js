@@ -236,6 +236,27 @@ class DBInbound {
         }
         return inbound.genLink(address, this.remark, true);
     }
+
+    static fromShareLink(link) {
+        const imported = Inbound.fromShareLink(link);
+        const inbound = imported.inbound;
+        const error = inbound.validateBasic();
+        if (!ObjectUtil.isEmpty(error)) {
+            throw new Error(error);
+        }
+        const dbInbound = new DBInbound();
+        dbInbound.remark = imported.remark;
+        dbInbound.port = inbound.port;
+        dbInbound.listen = inbound.listen;
+        dbInbound.protocol = inbound.protocol;
+        dbInbound.settings = inbound.settings.toString();
+        dbInbound.streamSettings = inbound.canEnableStream() ? inbound.stream.toString() : '{}';
+        dbInbound.sniffing = inbound.canSniffing() ? inbound.sniffing.toString() : '{}';
+        return {
+            inbound: inbound,
+            dbInbound: dbInbound,
+        };
+    }
 }
 
 class AllSetting {

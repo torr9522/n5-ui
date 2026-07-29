@@ -49,6 +49,7 @@
                             <a-button style="margin-left: 8px;" icon="profile" @click="showPortLimitStatus"></a-button>
                             <a-button style="margin-left: 8px;" icon="file-text" @click="showPortLimitLogs"></a-button>
                             <a-button style="margin-left: 8px;" icon="bug" @click="showPortLimitDiag"></a-button>
+                            <a-button style="margin-left: 8px;" icon="upload" @click="openImportInboundModal">导入节点</a-button>
                             <a-button style="margin-left: 8px;" icon="global" @click="openShareAddressModal">分享地址管理</a-button>
                         </div>
 <!--                        <a-input v-model="searchKey" placeholder="搜索" autofocus style="max-width: 300px"></a-input>-->
@@ -202,6 +203,17 @@
         <a-input v-model.trim="customShareQrcodeModal.manualAddress"
                  placeholder="手动输入临时分享地址，优先于下拉选择"
                  style="margin-top: 8px;"></a-input>
+    </a-modal>
+    <a-modal v-model="importInboundModal.visible" title="导入节点"
+             :closable="true" :mask-closable="false"
+             :confirm-loading="importInboundModal.submitting"
+             ok-text="导入" cancel-text="取消" @ok="importInboundModal.ok()">
+        <a-form layout="vertical">
+            <a-form-item label="分享链接">
+                <a-input type="textarea" :rows="6" v-model.trim="importInboundModal.links"
+                         placeholder="支持 vmess://、vless://、trojan://、ss://，每行一个"></a-input>
+            </a-form-item>
+        </a-form>
     </a-modal>
 </a-layout>
 {{template "js" .}}
@@ -399,6 +411,27 @@
         },
     };
 
+    const importInboundModal = {
+        visible: false,
+        submitting: false,
+        links: '',
+        show() {
+            this.links = '';
+            this.submitting = false;
+            this.visible = true;
+        },
+        close() {
+            this.visible = false;
+            this.submitting = false;
+        },
+        loading(loading) {
+            this.submitting = loading;
+        },
+        ok() {
+            app.importShareLinks(this.links);
+        },
+    };
+
     const app = new Vue({
         delimiters: ['[[', ']]'],
         el: '#app',
@@ -411,6 +444,7 @@
             shareAddressStore,
             shareAddressModal,
             customShareQrcodeModal,
+            importInboundModal,
         },
         methods: {
             loading(spinning=true) {
@@ -476,6 +510,9 @@
                     }
                 });
             },
+            openImportInboundModal() {
+                importInboundModal.show();
+            },
             openEditInbound(dbInbound) {
                 const inbound = dbInbound.toInbound();
                 inModal.show({
@@ -490,9 +527,9 @@
                     }
                 });
             },
-            async addInbound(inbound, dbInbound) {
+            buildInboundData(inbound, dbInbound) {
                 const canUseStream = inbound.canEnableStream() || inbound.protocol === Protocols.TROJAN;
-                const data = {
+                return {
                     up: dbInbound.up,
                     down: dbInbound.down,
                     total: dbInbound.total,
@@ -511,30 +548,46 @@
                     streamSettings: canUseStream ? inbound.stream.toString() : '{}',
                     sniffing: inbound.canSniffing() ? inbound.sniffing.toString() : '{}',
                 };
-                await this.submit('/xui/inbound/add', data, inModal);
+            },
+            async addInbound(inbound, dbInbound, modal=inModal) {
+                await this.submit('/xui/inbound/add', this.buildInboundData(inbound, dbInbound), modal);
             },
             async updateInbound(inbound, dbInbound) {
-                const canUseStream = inbound.canEnableStream() || inbound.protocol === Protocols.TROJAN;
-                const data = {
-                    up: dbInbound.up,
-                    down: dbInbound.down,
-                    total: dbInbound.total,
-                    remark: dbInbound.remark,
-                    enable: dbInbound.enable,
-                    expiryTime: dbInbound.expiryTime,
-                    ipLimit: dbInbound.ipLimit,
-                    ipTimeout: dbInbound._ipTimeout,
-                    portRate: dbInbound._portRate,
-                    ipRate: dbInbound._ipRate,
+                await this.submit(`/xui/inbound/update/${dbInbound.id}`, this.buildInboundData(inbound, dbInbound), inModal);
+            },
+            async importShareLinks(text) {
+                const links = text.split(/\r?\n/)
+                    .map(link => link.trim())
+                    .filter(link => !ObjectUtil.isEmpty(link));
+                if (links.length === 0) {
+                    this.$message.error('请输入分享链接');
+                    return;
+                }
 
-                    listen: inbound.listen,
-                    port: inbound.port,
-                    protocol: inbound.protocol,
-                    settings: inbound.settings.toString(),
-                    streamSettings: canUseStream ? inbound.stream.toString() : '{}',
-                    sniffing: inbound.canSniffing() ? inbound.sniffing.toString() : '{}',
-                };
-                await this.submit(`/xui/inbound/update/${dbInbound.id}`, data, inModal);
+                let imported = [];
+                try {
+                    imported = links.map(link => DBInbound.fromShareLink(link));
+                } catch (e) {
+                    this.$message.error(e.message || e.toString());
+                    return;
+                }
+
+                importInboundModal.loading(true);
+                let created = 0;
+                for (const item of imported) {
+                    const msg = await HttpUtil.post('/xui/inbound/add', this.buildInboundData(item.inbound, item.dbInbound));
+                    if (!msg.success) {
+                        importInboundModal.loading(false);
+                        if (created > 0) {
+                            await this.getDBInbounds();
+                        }
+                        return;
+                    }
+                    created += 1;
+                }
+                importInboundModal.close();
+                await this.getDBInbounds();
+                this.$message.success(`成功导入 ${created} 个节点`);
             },
             resetTraffic(dbInbound) {
                 this.$confirm({

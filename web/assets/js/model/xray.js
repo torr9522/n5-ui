@@ -881,6 +881,317 @@ class Inbound extends XrayCommonClass {
         this.sniffing = new Sniffing();
     }
 
+    static fromShareLink(link) {
+        if (ObjectUtil.isEmpty(link)) {
+            throw new Error('分享链接为空');
+        }
+        const value = link.trim();
+        if (value.startsWith('vmess://')) {
+            return Inbound.parseVMessLink(value);
+        }
+        if (value.startsWith('vless://')) {
+            return Inbound.parseVLESSLink(value);
+        }
+        if (value.startsWith('trojan://')) {
+            return Inbound.parseTrojanLink(value);
+        }
+        if (value.startsWith('ss://')) {
+            return Inbound.parseSSLink(value);
+        }
+        throw new Error('不支持的分享链接协议');
+    }
+
+    static decodeShareBase64(value) {
+        let text = value.trim().replace(/-/g, '+').replace(/_/g, '/');
+        while (text.length % 4 !== 0) {
+            text += '=';
+        }
+        return Base64.decode(text);
+    }
+
+    static parseSharePort(port) {
+        const value = parseInt(port, 10);
+        if (!Number.isInteger(value) || value < 1 || value > 65535) {
+            throw new Error('分享链接端口无效');
+        }
+        return value;
+    }
+
+    static decodeShareValue(value) {
+        if (ObjectUtil.isEmpty(value)) {
+            return '';
+        }
+        try {
+            return decodeURIComponent(value);
+        } catch (e) {
+            return value;
+        }
+    }
+
+    static normalizeShareNetwork(network) {
+        if (ObjectUtil.isEmpty(network)) {
+            return 'tcp';
+        }
+        switch (String(network).toLowerCase()) {
+            case 'tcp':
+            case 'kcp':
+            case 'ws':
+            case 'quic':
+            case 'grpc':
+                return String(network).toLowerCase();
+            case 'http':
+            case 'h2':
+                return 'http';
+            case 'httpupgrade':
+                throw new Error('当前不支持 HTTPUpgrade 传输');
+            default:
+                throw new Error('不支持的传输类型: ' + network);
+        }
+    }
+
+    static setShareHeader(headers, name, value) {
+        if (ObjectUtil.isEmpty(value)) {
+            return;
+        }
+        const index = headers.findIndex(header => header.name.toLowerCase() === name.toLowerCase());
+        if (index >= 0) {
+            headers[index].value = value;
+        } else {
+            headers.push({ name: name, value: value });
+        }
+    }
+
+    static applyShareStream(inbound, options={}) {
+        const network = Inbound.normalizeShareNetwork(options.network || options.type);
+        inbound.stream.network = network;
+
+        let security = (options.security || '').toLowerCase();
+        if (security === 'reality') {
+            throw new Error('当前不支持 Reality 分享链接导入');
+        }
+        if (security === 'tls' || security === 'xtls') {
+            inbound.stream.security = security;
+            inbound.stream.tls.server = options.sni || options.serverName || '';
+        } else {
+            inbound.stream.security = 'none';
+        }
+
+        switch (network) {
+            case 'tcp':
+                if ((options.headerType || options.tcpType) === 'http') {
+                    inbound.stream.tcp.type = 'http';
+                    if (!ObjectUtil.isEmpty(options.path)) {
+                        inbound.stream.tcp.request.path = String(options.path).split(',');
+                    }
+                    Inbound.setShareHeader(inbound.stream.tcp.request.headers, 'Host', options.host);
+                }
+                break;
+            case 'kcp':
+                inbound.stream.kcp.type = options.headerType || options.kcpType || 'none';
+                inbound.stream.kcp.seed = options.seed || '';
+                break;
+            case 'ws':
+                inbound.stream.ws.path = options.path || '/';
+                Inbound.setShareHeader(inbound.stream.ws.headers, 'Host', options.host);
+                break;
+            case 'http':
+                inbound.stream.http.path = options.path || '/';
+                inbound.stream.http.host = ObjectUtil.isEmpty(options.host) ? [''] : String(options.host).split(',');
+                break;
+            case 'quic':
+                inbound.stream.quic.security = options.quicSecurity || options.host || VmessMethods.NONE;
+                inbound.stream.quic.key = options.key || options.path || '';
+                inbound.stream.quic.type = options.headerType || options.quicType || 'none';
+                break;
+            case 'grpc':
+                inbound.stream.grpc.serviceName = options.serviceName || options.path || '';
+                break;
+        }
+    }
+
+    static parseVMessLink(link) {
+        const body = link.substring('vmess://'.length).split(/[?#]/)[0];
+        const config = JSON.parse(Inbound.decodeShareBase64(body));
+        const port = Inbound.parseSharePort(config.port);
+        const inbound = new Inbound(port, '', Protocols.VMESS);
+        inbound.settings.vmesses[0].id = config.id || config.uuid || '';
+        inbound.settings.vmesses[0].alterId = parseInt(config.aid || config.alterId || 0, 10);
+        Inbound.applyShareStream(inbound, {
+            network: config.net || config.type,
+            security: config.tls === 'tls' || config.tls === 'xtls' ? config.tls : 'none',
+            sni: config.sni || config.serverName,
+            tcpType: config.type,
+            headerType: config.type,
+            host: config.host,
+            path: config.path,
+        });
+        return {
+            inbound: inbound,
+            remark: config.ps || '',
+        };
+    }
+
+    static parseVLESSLink(link) {
+        const url = new URL(link);
+        const security = (url.searchParams.get('security') || 'none').toLowerCase();
+        if (security === 'reality') {
+            throw new Error('当前不支持 Reality 分享链接导入');
+        }
+        const port = Inbound.parseSharePort(url.port);
+        const inbound = new Inbound(port, '', Protocols.VLESS);
+        inbound.settings.vlesses[0].id = Inbound.decodeShareValue(url.username);
+        inbound.settings.decryption = url.searchParams.get('encryption') || 'none';
+        inbound.settings.vlesses[0].flow = url.searchParams.get('flow') || '';
+        Inbound.applyShareStream(inbound, {
+            network: url.searchParams.get('type') || 'tcp',
+            security: security,
+            sni: url.searchParams.get('sni'),
+            headerType: url.searchParams.get('headerType'),
+            host: url.searchParams.get('host'),
+            path: url.searchParams.get('path'),
+            seed: url.searchParams.get('seed'),
+            quicSecurity: url.searchParams.get('quicSecurity'),
+            key: url.searchParams.get('key'),
+            serviceName: url.searchParams.get('serviceName'),
+        });
+        return {
+            inbound: inbound,
+            remark: Inbound.decodeShareValue(url.hash.replace(/^#/, '')),
+        };
+    }
+
+    static parseTrojanLink(link) {
+        const url = new URL(link);
+        const security = (url.searchParams.get('security') || 'tls').toLowerCase();
+        if (security === 'reality') {
+            throw new Error('当前不支持 Reality 分享链接导入');
+        }
+        const port = Inbound.parseSharePort(url.port);
+        const inbound = new Inbound(port, '', Protocols.TROJAN);
+        inbound.settings.clients[0].password = Inbound.decodeShareValue(url.username);
+        Inbound.applyShareStream(inbound, {
+            network: url.searchParams.get('type') || 'tcp',
+            security: security,
+            sni: url.searchParams.get('sni'),
+            headerType: url.searchParams.get('headerType'),
+            host: url.searchParams.get('host'),
+            path: url.searchParams.get('path'),
+            seed: url.searchParams.get('seed'),
+            quicSecurity: url.searchParams.get('quicSecurity'),
+            key: url.searchParams.get('key'),
+            serviceName: url.searchParams.get('serviceName'),
+        });
+        return {
+            inbound: inbound,
+            remark: Inbound.decodeShareValue(url.hash.replace(/^#/, '')),
+        };
+    }
+
+    static parseShareHostPort(value) {
+        let host = '';
+        let port = '';
+        if (value.startsWith('[')) {
+            const index = value.indexOf(']');
+            host = value.substring(1, index);
+            port = value.substring(index + 2);
+        } else {
+            const index = value.lastIndexOf(':');
+            host = value.substring(0, index);
+            port = value.substring(index + 1);
+        }
+        if (ObjectUtil.isEmpty(host)) {
+            throw new Error('分享链接地址无效');
+        }
+        return {
+            host: host,
+            port: Inbound.parseSharePort(port),
+        };
+    }
+
+    static parseSSLink(link) {
+        const raw = link.substring('ss://'.length);
+        const hashIndex = raw.indexOf('#');
+        const withoutHash = hashIndex >= 0 ? raw.substring(0, hashIndex) : raw;
+        const remark = hashIndex >= 0 ? Inbound.decodeShareValue(raw.substring(hashIndex + 1)) : '';
+        const queryIndex = withoutHash.indexOf('?');
+        const body = queryIndex >= 0 ? withoutHash.substring(0, queryIndex) : withoutHash;
+        const query = queryIndex >= 0 ? new URLSearchParams(withoutHash.substring(queryIndex + 1)) : new URLSearchParams();
+        if (!ObjectUtil.isEmpty(query.get('plugin'))) {
+            throw new Error('当前不支持 Shadowsocks plugin 分享链接导入');
+        }
+
+        let userInfo = '';
+        let hostPort = '';
+        const atIndex = body.lastIndexOf('@');
+        if (atIndex >= 0) {
+            userInfo = body.substring(0, atIndex);
+            hostPort = body.substring(atIndex + 1);
+            const decodedUserInfo = Inbound.decodeShareValue(userInfo);
+            if (decodedUserInfo.includes(':')) {
+                userInfo = decodedUserInfo;
+            } else {
+                userInfo = Inbound.decodeShareBase64(userInfo);
+            }
+        } else {
+            const decoded = Inbound.decodeShareBase64(body);
+            const decodedAtIndex = decoded.lastIndexOf('@');
+            if (decodedAtIndex < 0) {
+                throw new Error('Shadowsocks 分享链接格式无效');
+            }
+            userInfo = decoded.substring(0, decodedAtIndex);
+            hostPort = decoded.substring(decodedAtIndex + 1);
+        }
+
+        const colonIndex = userInfo.indexOf(':');
+        if (colonIndex < 0) {
+            throw new Error('Shadowsocks 分享链接认证信息无效');
+        }
+        const method = userInfo.substring(0, colonIndex);
+        const password = userInfo.substring(colonIndex + 1);
+        const server = Inbound.parseShareHostPort(hostPort);
+        const inbound = new Inbound(server.port, '', Protocols.SHADOWSOCKS);
+        inbound.settings.method = method;
+        inbound.settings.password = password;
+        return {
+            inbound: inbound,
+            remark: remark,
+        };
+    }
+
+    validateBasic() {
+        const port = Number(this.port);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            return '端口必须是 1-65535 的整数';
+        }
+
+        switch (this.protocol) {
+            case Protocols.VMESS:
+                if (ObjectUtil.isEmpty(this.settings.vmesses[0].id)) {
+                    return 'VMess UUID 不能为空';
+                }
+                break;
+            case Protocols.VLESS:
+                if (ObjectUtil.isEmpty(this.settings.vlesses[0].id)) {
+                    return 'VLESS UUID 不能为空';
+                }
+                break;
+            case Protocols.TROJAN:
+                if (ObjectUtil.isEmpty(this.settings.clients[0].password)) {
+                    return 'Trojan 密码不能为空';
+                }
+                break;
+            case Protocols.SHADOWSOCKS:
+                if (ObjectUtil.isEmpty(this.settings.method)) {
+                    return 'Shadowsocks 加密方式不能为空';
+                }
+                if (ObjectUtil.isEmpty(this.settings.password)) {
+                    return 'Shadowsocks 密码不能为空';
+                }
+                break;
+        }
+        return '';
+    }
+
     genVmessLink(address='', remark='', overrideAddress=false) {
         if (this.protocol !== Protocols.VMESS) {
             return '';
@@ -938,11 +1249,13 @@ class Inbound extends XrayCommonClass {
             port: this.port,
             id: this.settings.vmesses[0].id,
             aid: this.settings.vmesses[0].alterId,
+            scy: VmessMethods.AUTO,
             net: network,
             type: type,
             host: host,
             path: path,
             tls: this.stream.security,
+            sni: this.stream.security === 'tls' ? this.stream.tls.server : '',
         };
         return 'vmess://' + base64(JSON.stringify(obj, null, 2));
     }
@@ -956,6 +1269,7 @@ class Inbound extends XrayCommonClass {
         const port = this.port;
         const type = this.stream.network;
         const params = new Map();
+        params.set("encryption", settings.decryption || "none");
         params.set("type", this.stream.network);
         if (this.xtls) {
             params.set("security", "xtls");
@@ -1019,6 +1333,8 @@ class Inbound extends XrayCommonClass {
 
         if (this.xtls) {
             params.set("flow", this.settings.vlesses[0].flow);
+        } else if (!ObjectUtil.isEmpty(this.settings.vlesses[0].flow)) {
+            params.set("flow", this.settings.vlesses[0].flow);
         }
 
         const link = `vless://${uuid}@${address}:${port}`;
@@ -1026,7 +1342,7 @@ class Inbound extends XrayCommonClass {
         for (const [key, value] of params) {
             url.searchParams.set(key, value)
         }
-        url.hash = encodeURIComponent(remark);
+        url.hash = remark;
         return url.toString();
     }
 
@@ -1046,8 +1362,63 @@ class Inbound extends XrayCommonClass {
         let settings = this.settings;
         if (overrideAddress) {
             address = normalizeShareAddress(address, true);
+        } else if (this.stream.security === 'tls' || this.stream.security === 'xtls') {
+            if (!ObjectUtil.isEmpty(this.stream.tls.server)) {
+                address = this.stream.tls.server;
+            }
         }
-        return `trojan://${settings.clients[0].password}@${address}:${this.port}#${encodeURIComponent(remark)}`;
+
+        const params = new Map();
+        params.set("security", this.stream.security);
+        params.set("type", this.stream.network);
+        switch (this.stream.network) {
+            case "tcp":
+                if (this.stream.tcp.type === 'http') {
+                    const request = this.stream.tcp.request;
+                    params.set("path", request.path.join(','));
+                    const index = request.headers.findIndex(header => header.name.toLowerCase() === 'host');
+                    if (index >= 0) {
+                        params.set("host", request.headers[index].value);
+                    }
+                }
+                break;
+            case "ws":
+                params.set("path", this.stream.ws.path);
+                const wsHostIndex = this.stream.ws.headers.findIndex(header => header.name.toLowerCase() === 'host');
+                if (wsHostIndex >= 0) {
+                    params.set("host", this.stream.ws.headers[wsHostIndex].value);
+                }
+                break;
+            case "grpc":
+                params.set("serviceName", this.stream.grpc.serviceName);
+                break;
+            case "http":
+                params.set("path", this.stream.http.path);
+                params.set("host", this.stream.http.host);
+                break;
+            case "kcp":
+                params.set("headerType", this.stream.kcp.type);
+                params.set("seed", this.stream.kcp.seed);
+                break;
+            case "quic":
+                params.set("quicSecurity", this.stream.quic.security);
+                params.set("key", this.stream.quic.key);
+                params.set("headerType", this.stream.quic.type);
+                break;
+        }
+        if (this.stream.security === 'tls' || this.stream.security === 'xtls') {
+            if (!ObjectUtil.isEmpty(this.stream.tls.server)) {
+                params.set("sni", this.stream.tls.server);
+            }
+        }
+
+        const link = `trojan://${encodeURIComponent(settings.clients[0].password)}@${address}:${this.port}`;
+        const url = new URL(link);
+        for (const [key, value] of params) {
+            url.searchParams.set(key, value);
+        }
+        url.hash = remark;
+        return url.toString();
     }
 
     genLink(address='', remark='', overrideAddress=false) {
