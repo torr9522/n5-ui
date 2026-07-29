@@ -240,6 +240,9 @@ class DBInbound {
     static fromShareLink(link) {
         const imported = Inbound.fromShareLink(link);
         const inbound = imported.inbound;
+        if (imported.requiresServerPrivateKey) {
+            throw new Error('Reality 分享链接只包含客户端 publicKey，不能直接创建服务端入站；请新增 VLESS Reality 入站并生成或填写 privateKey');
+        }
         const error = inbound.validateBasic();
         if (!ObjectUtil.isEmpty(error)) {
             throw new Error(error);

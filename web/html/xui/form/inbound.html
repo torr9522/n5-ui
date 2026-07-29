@@ -153,7 +153,7 @@
 </template>
 
 <!-- tls settings -->
-<template v-if="inbound.canEnableTls()">
+<template v-if="inbound.protocol === Protocols.VLESS || inbound.canEnableTls()">
     {{template "form/tlsSettings"}}
 </template>
 

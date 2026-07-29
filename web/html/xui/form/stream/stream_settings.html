@@ -4,10 +4,10 @@
     <a-form-item label="传输">
         <a-select v-model="inbound.stream.network" @change="streamNetworkChange">
             <a-select-option value="tcp">tcp</a-select-option>
-            <a-select-option value="kcp">kcp</a-select-option>
-            <a-select-option value="ws">ws</a-select-option>
-            <a-select-option value="http">http</a-select-option>
-            <a-select-option value="quic">quic</a-select-option>
+            <a-select-option value="kcp" :disabled="inbound.reality">kcp</a-select-option>
+            <a-select-option value="ws" :disabled="inbound.reality">ws</a-select-option>
+            <a-select-option value="http" :disabled="inbound.reality">http</a-select-option>
+            <a-select-option value="quic" :disabled="inbound.reality">quic</a-select-option>
             <a-select-option value="grpc">grpc</a-select-option>
         </a-select>
     </a-form-item>

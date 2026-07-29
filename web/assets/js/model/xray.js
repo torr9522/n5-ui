@@ -486,10 +486,89 @@ TlsStreamSettings.Cert = class extends XrayCommonClass {
     }
 };
 
+class RealityStreamSettings extends XrayCommonClass {
+    constructor(dest='',
+                serverNames=[''],
+                privateKey='',
+                shortIds=[''],
+                fingerprint='chrome',
+                publicKey='',
+                spiderX='') {
+        super();
+        this.dest = dest;
+        this.serverNames = serverNames;
+        this.privateKey = privateKey;
+        this.shortIds = shortIds;
+        this.fingerprint = fingerprint;
+        this.publicKey = publicKey;
+        this.spiderX = spiderX;
+    }
+
+    static splitList(value) {
+        if (Array.isArray(value)) {
+            return value;
+        }
+        if (ObjectUtil.isEmpty(value)) {
+            return [''];
+        }
+        return String(value)
+            .split(',')
+            .map(item => item.trim())
+            .filter(item => !ObjectUtil.isEmpty(item));
+    }
+
+    get serverNamesText() {
+        return this.serverNames.join(',');
+    }
+
+    set serverNamesText(value) {
+        this.serverNames = RealityStreamSettings.splitList(value);
+    }
+
+    get shortIdsText() {
+        return this.shortIds.join(',');
+    }
+
+    set shortIdsText(value) {
+        this.shortIds = RealityStreamSettings.splitList(value);
+    }
+
+    static fromJson(json={}) {
+        return new RealityStreamSettings(
+            json.dest || '',
+            Array.isArray(json.serverNames) ? json.serverNames : [''],
+            json.privateKey || '',
+            Array.isArray(json.shortIds) ? json.shortIds : [''],
+            json.fingerprint || 'chrome',
+            json.publicKey || '',
+            json.spiderX || '',
+        );
+    }
+
+    toJson() {
+        if (ObjectUtil.isEmpty(this.fingerprint)) {
+            this.fingerprint = 'chrome';
+        }
+        if (ObjectUtil.isEmpty(this.spiderX)) {
+            this.spiderX = '/';
+        }
+        return {
+            dest: this.dest,
+            serverNames: this.serverNames.filter(serverName => !ObjectUtil.isEmpty(serverName)),
+            privateKey: this.privateKey,
+            shortIds: this.shortIds.filter(shortId => !ObjectUtil.isEmpty(shortId)),
+            fingerprint: this.fingerprint,
+            publicKey: this.publicKey,
+            spiderX: this.spiderX,
+        };
+    }
+}
+
 class StreamSettings extends XrayCommonClass {
     constructor(network='tcp',
                 security='none',
                 tlsSettings=new TlsStreamSettings(),
+                realitySettings=new RealityStreamSettings(),
                 tcpSettings=new TcpStreamSettings(),
                 kcpSettings=new KcpStreamSettings(),
                 wsSettings=new WsStreamSettings(),
@@ -501,6 +580,7 @@ class StreamSettings extends XrayCommonClass {
         this.network = network;
         this.security = security;
         this.tls = tlsSettings;
+        this.reality = realitySettings;
         this.tcp = tcpSettings;
         this.kcp = kcpSettings;
         this.ws = wsSettings;
@@ -533,6 +613,18 @@ class StreamSettings extends XrayCommonClass {
         }
     }
 
+    get isReality() {
+        return this.security === 'reality';
+    }
+
+    set isReality(isReality) {
+        if (isReality) {
+            this.security = 'reality';
+        } else {
+            this.security = 'none';
+        }
+    }
+
     static fromJson(json={}) {
         let tls;
         if (json.security === "xtls") {
@@ -544,6 +636,7 @@ class StreamSettings extends XrayCommonClass {
             json.network,
             json.security,
             tls,
+            RealityStreamSettings.fromJson(json.realitySettings),
             TcpStreamSettings.fromJson(json.tcpSettings),
             KcpStreamSettings.fromJson(json.kcpSettings),
             WsStreamSettings.fromJson(json.wsSettings),
@@ -560,6 +653,7 @@ class StreamSettings extends XrayCommonClass {
             security: this.security,
             tlsSettings: this.isTls ? this.tls.toJson() : undefined,
             xtlsSettings: this.isXTls ? this.tls.toJson() : undefined,
+            realitySettings: this.isReality ? this.reality.toJson() : undefined,
             tcpSettings: network === 'tcp' ? this.tcp.toJson() : undefined,
             kcpSettings: network === 'kcp' ? this.kcp.toJson() : undefined,
             wsSettings: network === 'ws' ? this.ws.toJson() : undefined,
@@ -643,6 +737,18 @@ class Inbound extends XrayCommonClass {
     set xtls(isXTls) {
         if (isXTls) {
             this.stream.security = 'xtls';
+        } else {
+            this.stream.security = 'none';
+        }
+    }
+
+    get reality() {
+        return this.stream.security === 'reality';
+    }
+
+    set reality(isReality) {
+        if (isReality) {
+            this.stream.security = 'reality';
         } else {
             this.stream.security = 'none';
         }
@@ -760,6 +866,9 @@ class Inbound extends XrayCommonClass {
         if (this.stream.isTls || this.stream.isXTls) {
             return this.stream.tls.server;
         }
+        if (this.stream.isReality && Array.isArray(this.stream.reality.serverNames)) {
+            return this.stream.reality.serverNames[0] || "";
+        }
         return "";
     }
 
@@ -846,6 +955,13 @@ class Inbound extends XrayCommonClass {
         return this.network === "tcp";
     }
 
+    canEnableReality() {
+        if (this.protocol !== Protocols.VLESS) {
+            return false;
+        }
+        return this.network === "tcp" || this.network === "grpc";
+    }
+
     canEnableStream() {
         switch (this.protocol) {
             case Protocols.VMESS:
@@ -927,6 +1043,44 @@ class Inbound extends XrayCommonClass {
         }
     }
 
+    static parseShareUrl(link, scheme) {
+        const prefix = scheme + '://';
+        if (!link.startsWith(prefix)) {
+            throw new Error('分享链接协议无效');
+        }
+
+        let raw = link.substring(prefix.length);
+        let fragment = '';
+        const hashIndex = raw.indexOf('#');
+        if (hashIndex >= 0) {
+            fragment = raw.substring(hashIndex + 1);
+            raw = raw.substring(0, hashIndex);
+        }
+
+        let queryString = '';
+        const queryIndex = raw.indexOf('?');
+        if (queryIndex >= 0) {
+            queryString = raw.substring(queryIndex + 1);
+            raw = raw.substring(0, queryIndex);
+        }
+
+        const atIndex = raw.lastIndexOf('@');
+        if (atIndex < 0) {
+            throw new Error('分享链接认证信息无效');
+        }
+
+        const userInfo = raw.substring(0, atIndex);
+        const hostPort = raw.substring(atIndex + 1);
+        const server = Inbound.parseShareHostPort(hostPort);
+        return {
+            userInfo: userInfo,
+            host: server.host,
+            port: server.port,
+            query: new URLSearchParams(queryString),
+            fragment: fragment,
+        };
+    }
+
     static normalizeShareNetwork(network) {
         if (ObjectUtil.isEmpty(network)) {
             return 'tcp';
@@ -966,9 +1120,13 @@ class Inbound extends XrayCommonClass {
 
         let security = (options.security || '').toLowerCase();
         if (security === 'reality') {
-            throw new Error('当前不支持 Reality 分享链接导入');
-        }
-        if (security === 'tls' || security === 'xtls') {
+            inbound.stream.security = 'reality';
+            inbound.stream.reality.serverNames = RealityStreamSettings.splitList(options.sni || options.serverName);
+            inbound.stream.reality.fingerprint = options.fingerprint || options.fp || 'chrome';
+            inbound.stream.reality.publicKey = options.publicKey || options.pbk || '';
+            inbound.stream.reality.shortIds = RealityStreamSettings.splitList(options.shortId || options.sid);
+            inbound.stream.reality.spiderX = options.spiderX || options.spx || '/';
+        } else if (security === 'tls' || security === 'xtls') {
             inbound.stream.security = security;
             inbound.stream.tls.server = options.sni || options.serverName || '';
         } else {
@@ -1031,58 +1189,66 @@ class Inbound extends XrayCommonClass {
     }
 
     static parseVLESSLink(link) {
-        const url = new URL(link);
-        const security = (url.searchParams.get('security') || 'none').toLowerCase();
+        const parsed = Inbound.parseShareUrl(link, 'vless');
+        const query = parsed.query;
+        const security = (query.get('security') || 'none').toLowerCase();
+        const inbound = new Inbound(parsed.port, '', Protocols.VLESS);
+        inbound.settings.vlesses[0].id = Inbound.decodeShareValue(parsed.userInfo);
+        inbound.settings.decryption = query.get('encryption') || 'none';
+        inbound.settings.vlesses[0].flow = query.get('flow') || '';
         if (security === 'reality') {
-            throw new Error('当前不支持 Reality 分享链接导入');
+            const network = Inbound.normalizeShareNetwork(query.get('type') || 'tcp');
+            if (network !== 'tcp' && network !== 'grpc') {
+                throw new Error('Reality 分享链接仅支持 tcp 或 grpc 传输');
+            }
         }
-        const port = Inbound.parseSharePort(url.port);
-        const inbound = new Inbound(port, '', Protocols.VLESS);
-        inbound.settings.vlesses[0].id = Inbound.decodeShareValue(url.username);
-        inbound.settings.decryption = url.searchParams.get('encryption') || 'none';
-        inbound.settings.vlesses[0].flow = url.searchParams.get('flow') || '';
         Inbound.applyShareStream(inbound, {
-            network: url.searchParams.get('type') || 'tcp',
+            network: query.get('type') || 'tcp',
             security: security,
-            sni: url.searchParams.get('sni'),
-            headerType: url.searchParams.get('headerType'),
-            host: url.searchParams.get('host'),
-            path: url.searchParams.get('path'),
-            seed: url.searchParams.get('seed'),
-            quicSecurity: url.searchParams.get('quicSecurity'),
-            key: url.searchParams.get('key'),
-            serviceName: url.searchParams.get('serviceName'),
+            sni: query.get('sni'),
+            fingerprint: query.get('fp') || query.get('fingerprint'),
+            publicKey: query.get('pbk') || query.get('publicKey'),
+            shortId: query.get('sid') || query.get('shortId'),
+            spiderX: query.get('spx') || query.get('spiderX'),
+            headerType: query.get('headerType'),
+            host: query.get('host'),
+            path: query.get('path'),
+            seed: query.get('seed'),
+            quicSecurity: query.get('quicSecurity'),
+            key: query.get('key'),
+            serviceName: query.get('serviceName'),
         });
         return {
             inbound: inbound,
-            remark: Inbound.decodeShareValue(url.hash.replace(/^#/, '')),
+            remark: Inbound.decodeShareValue(parsed.fragment),
+            requiresServerPrivateKey: security === 'reality',
         };
     }
 
     static parseTrojanLink(link) {
-        const url = new URL(link);
-        const security = (url.searchParams.get('security') || 'tls').toLowerCase();
+        const parsed = Inbound.parseShareUrl(link, 'trojan');
+        const query = parsed.query;
+        const security = (query.get('security') || 'tls').toLowerCase();
         if (security === 'reality') {
             throw new Error('当前不支持 Reality 分享链接导入');
         }
-        const port = Inbound.parseSharePort(url.port);
-        const inbound = new Inbound(port, '', Protocols.TROJAN);
-        inbound.settings.clients[0].password = Inbound.decodeShareValue(url.username);
+        const inbound = new Inbound(parsed.port, '', Protocols.TROJAN);
+        inbound.settings.clients[0].password = Inbound.decodeShareValue(parsed.userInfo);
         Inbound.applyShareStream(inbound, {
-            network: url.searchParams.get('type') || 'tcp',
+            network: query.get('type') || 'tcp',
             security: security,
-            sni: url.searchParams.get('sni'),
-            headerType: url.searchParams.get('headerType'),
-            host: url.searchParams.get('host'),
-            path: url.searchParams.get('path'),
-            seed: url.searchParams.get('seed'),
-            quicSecurity: url.searchParams.get('quicSecurity'),
-            key: url.searchParams.get('key'),
-            serviceName: url.searchParams.get('serviceName'),
+            sni: query.get('sni'),
+            headerType: query.get('headerType'),
+            host: query.get('host'),
+            path: query.get('path'),
+            seed: query.get('seed'),
+            quicSecurity: query.get('quicSecurity'),
+            key: query.get('key'),
+            serviceName: query.get('serviceName'),
         });
         return {
             inbound: inbound,
-            remark: Inbound.decodeShareValue(url.hash.replace(/^#/, '')),
+            remark: Inbound.decodeShareValue(parsed.fragment),
         };
     }
 
@@ -1172,6 +1338,38 @@ class Inbound extends XrayCommonClass {
             case Protocols.VLESS:
                 if (ObjectUtil.isEmpty(this.settings.vlesses[0].id)) {
                     return 'VLESS UUID 不能为空';
+                }
+                if (this.reality) {
+                    if (!this.canEnableReality()) {
+                        return 'Reality 仅支持 tcp 或 grpc 传输';
+                    }
+                    if (ObjectUtil.isEmpty(this.stream.reality.dest)) {
+                        return 'Reality dest 不能为空';
+                    }
+                    if (ObjectUtil.isArrEmpty(this.stream.reality.serverNames.filter(serverName => !ObjectUtil.isEmpty(serverName)))) {
+                        return 'Reality serverNames 不能为空';
+                    }
+                if (ObjectUtil.isEmpty(this.stream.reality.privateKey)) {
+                    return 'Reality privateKey 不能为空';
+                }
+                    const shortIds = this.stream.reality.shortIds.filter(shortId => !ObjectUtil.isEmpty(shortId));
+                    if (ObjectUtil.isArrEmpty(shortIds)) {
+                        return 'Reality shortIds 不能为空';
+                    }
+                    for (const shortId of shortIds) {
+                        if (!/^[0-9a-fA-F]{2,16}$/.test(shortId) || shortId.length % 2 !== 0) {
+                            return 'Reality shortId 必须是 2-16 位偶数长度十六进制字符串';
+                        }
+                    }
+                    if (ObjectUtil.isEmpty(this.stream.reality.fingerprint)) {
+                        this.stream.reality.fingerprint = 'chrome';
+                    }
+                    if (ObjectUtil.isEmpty(this.stream.reality.spiderX)) {
+                        this.stream.reality.spiderX = '/';
+                    }
+                    if (!ObjectUtil.isEmpty(this.stream.reality.spiderX) && !this.stream.reality.spiderX.startsWith('/')) {
+                        return 'Reality spiderX 必须以 / 开头';
+                    }
                 }
                 break;
             case Protocols.TROJAN:
@@ -1319,7 +1517,25 @@ class Inbound extends XrayCommonClass {
                 break;
         }
 
-        if (this.stream.security === 'tls') {
+        if (this.reality) {
+            if (type !== 'tcp' && type !== 'grpc') {
+                throw new Error('Reality 分享仅支持 tcp 或 grpc 传输');
+            }
+            const reality = this.stream.reality;
+            const serverName = Array.isArray(reality.serverNames) ? reality.serverNames[0] : '';
+            const shortId = Array.isArray(reality.shortIds) ? reality.shortIds[0] : '';
+            if (ObjectUtil.isEmpty(reality.publicKey)) {
+                throw new Error('Reality publicKey 不能为空，请先生成 X25519 密钥');
+            }
+            params.set("security", "reality");
+            params.set("sni", serverName || address);
+            params.set("fp", reality.fingerprint || 'chrome');
+            params.set("pbk", reality.publicKey);
+            params.set("sid", shortId || '');
+            if (!ObjectUtil.isEmpty(reality.spiderX)) {
+                params.set("spx", reality.spiderX);
+            }
+        } else if (this.stream.security === 'tls') {
             if (!ObjectUtil.isEmpty(this.stream.tls.server)) {
                 if (overrideAddress) {
                     params.set("sni", this.stream.tls.server);

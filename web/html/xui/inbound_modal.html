@@ -68,6 +68,7 @@
             Protocols: protocols,
             SSMethods: SSMethods,
             certificateStore: certificateStore,
+            realityKeyGenerating: false,
             get inbound() {
                 return inModal.inbound;
             },
@@ -100,8 +101,43 @@
                 this.inbound.stream.tls.certs[0].certFile = cert.certFile;
                 this.inbound.stream.tls.certs[0].keyFile = cert.keyFile;
             },
-            streamNetworkChange(oldValue) {
-                if (oldValue === 'kcp') {
+            vlessSecurityChange(security) {
+                if (security === 'tls') {
+                    certificateStore.load(true);
+                }
+                if (security === 'reality') {
+                    if (!this.inbound.canEnableReality()) {
+                        this.inbound.stream.network = 'tcp';
+                    }
+                    if (ObjectUtil.isEmpty(this.inbound.settings.vlesses[0].flow)) {
+                        this.inbound.settings.vlesses[0].flow = FLOW_CONTROL.VISION;
+                    }
+                    if (ObjectUtil.isEmpty(this.inbound.stream.reality.spiderX)) {
+                        this.inbound.stream.reality.spiderX = '/';
+                    }
+                } else if (this.inbound.settings.vlesses[0].flow === FLOW_CONTROL.VISION) {
+                    this.inbound.settings.vlesses[0].flow = '';
+                }
+            },
+            async generateRealityKeyPair() {
+                this.realityKeyGenerating = true;
+                try {
+                    const msg = await HttpUtil.post('/xui/reality/x25519');
+                    if (!msg.success) {
+                        return;
+                    }
+                    this.inbound.stream.reality.privateKey = msg.obj.privateKey;
+                    this.inbound.stream.reality.publicKey = msg.obj.publicKey;
+                } finally {
+                    this.realityKeyGenerating = false;
+                }
+            },
+            streamNetworkChange(value) {
+                if (this.inbound.reality && !this.inbound.canEnableReality()) {
+                    this.inbound.stream.network = 'tcp';
+                    return;
+                }
+                if (value === 'kcp') {
                     this.inModal.inbound.tls = false;
                 }
             }

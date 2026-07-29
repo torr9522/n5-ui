@@ -405,7 +405,13 @@
                 app.$message.error('请输入或选择分享地址');
                 return;
             }
-            const link = this.dbInbound.genLink(address);
+            let link;
+            try {
+                link = this.dbInbound.genLink(address);
+            } catch (e) {
+                app.$message.error(e.message || e.toString());
+                return;
+            }
             this.visible = false;
             qrModal.show('自定义二维码', link);
         },
@@ -613,7 +619,13 @@
                 });
             },
             showQrcode(dbInbound) {
-                const link = dbInbound.genLink();
+                let link;
+                try {
+                    link = dbInbound.genLink();
+                } catch (e) {
+                    this.$message.error(e.message || e.toString());
+                    return;
+                }
                 qrModal.show('二维码', link);
             },
             showCustomQrcode(dbInbound) {
