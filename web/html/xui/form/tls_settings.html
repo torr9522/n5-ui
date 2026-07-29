@@ -24,6 +24,19 @@
         </a-radio-group>
     </a-form-item>
     <template v-if="inbound.stream.tls.certs[0].useFile">
+        <a-form-item label="已有证书">
+            <a-select allow-clear style="width: 260px"
+                      :loading="certificateStore.loading"
+                      placeholder="选择证书"
+                      @dropdownVisibleChange="open => open && certificateStore.load()"
+                      @change="selectTlsCertificate">
+                <a-select-option v-for="cert in certificateStore.validCertificates"
+                                 :key="certificateStore.getValue(cert)"
+                                 :value="certificateStore.getValue(cert)">
+                    [[ cert.domain ]] [[ cert.expire ? DateUtil.formatMillis(cert.expire * 1000) : '' ]]
+                </a-select-option>
+            </a-select>
+        </a-form-item>
         <a-form-item label="公钥文件路径">
             <a-input v-model.trim="inbound.stream.tls.certs[0].certFile"></a-input>
         </a-form-item>

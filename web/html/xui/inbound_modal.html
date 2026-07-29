@@ -66,6 +66,7 @@
             inModal: inModal,
             Protocols: protocols,
             SSMethods: SSMethods,
+            certificateStore: certificateStore,
             get inbound() {
                 return inModal.inbound;
             },
@@ -83,6 +84,16 @@
             }
         },
         methods: {
+            selectTlsCertificate(value) {
+                const cert = certificateStore.findByValue(value);
+                if (!cert) {
+                    return;
+                }
+                this.inbound.stream.tls.server = cert.domain;
+                this.inbound.stream.tls.certs[0].useFile = true;
+                this.inbound.stream.tls.certs[0].certFile = cert.certFile;
+                this.inbound.stream.tls.certs[0].keyFile = cert.keyFile;
+            },
             streamNetworkChange(oldValue) {
                 if (oldValue === 'kcp') {
                     this.inModal.inbound.tls = false;

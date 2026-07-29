@@ -10,6 +10,8 @@ XUI_LOCAL_INSTALL_SCRIPT="/usr/local/x-ui/install.sh"
 XUI_LOCAL_SHELL_SCRIPT="/usr/local/x-ui/x-ui.sh"
 XUI_BBR_URL="${XUI_BBR_URL:-${XUI_RAW_BASE}/scripts/bbr.sh}"
 XUI_ACME_INSTALL_URL="${XUI_ACME_INSTALL_URL:-${XUI_RAW_BASE}/scripts/acme_install.sh}"
+XUI_CERT_DIR="/etc/x-ui/certs"
+XUI_DB_PATH="/etc/x-ui/x-ui.db"
 
 #consts for log check and clear,unit:M
 declare -r DEFAULT_LOG_FILE_DELETE_TRIGGER=35
@@ -440,6 +442,199 @@ show_xray_status() {
     fi
 }
 
+cert_safe_domain() {
+    echo "$1" | sed 's/^\*\.//' | sed 's/[^A-Za-z0-9._-]/_/g' | sed 's/^[._-]*//;s/[._-]*$//'
+}
+
+cert_domain_dir() {
+    local domain="$1"
+    local safe_domain
+    safe_domain=$(cert_safe_domain "${domain}")
+    if [[ -z "${safe_domain}" ]]; then
+        safe_domain="unknown"
+    fi
+    echo "${XUI_CERT_DIR}/${safe_domain}"
+}
+
+write_cert_meta() {
+    local domain="$1"
+    local provider="$2"
+    local auto_renew="$3"
+    local dir
+    local expire=""
+    dir=$(cert_domain_dir "${domain}")
+    if command -v openssl &>/dev/null && [[ -f "${dir}/fullchain.pem" ]]; then
+        expire=$(openssl x509 -enddate -noout -in "${dir}/fullchain.pem" 2>/dev/null | cut -d= -f2)
+    fi
+    cat > "${dir}/meta.json" <<EOF
+{
+  "domain": "${domain}",
+  "provider": "${provider}",
+  "source": "acme.sh",
+  "certFile": "${dir}/fullchain.pem",
+  "keyFile": "${dir}/privkey.pem",
+  "created": $(date +%s),
+  "expireText": "${expire}",
+  "autoRenew": ${auto_renew}
+}
+EOF
+}
+
+list_certificates() {
+    if [[ ! -d "${XUI_CERT_DIR}" ]]; then
+        LOGI "证书目录不存在: ${XUI_CERT_DIR}"
+        return 0
+    fi
+    LOGI "证书目录: ${XUI_CERT_DIR}"
+    local found=0
+    for dir in "${XUI_CERT_DIR}"/*; do
+        [[ -d "${dir}" ]] || continue
+        found=1
+        local domain
+        domain=$(basename "${dir}")
+        if [[ -f "${dir}/meta.json" ]] && command -v jq &>/dev/null; then
+            domain=$(jq -r '.domain // empty' "${dir}/meta.json")
+        fi
+        echo "----------------------------------------"
+        LOGI "域名: ${domain}"
+        LOGI "证书: ${dir}/fullchain.pem"
+        LOGI "私钥: ${dir}/privkey.pem"
+        if command -v openssl &>/dev/null && [[ -f "${dir}/fullchain.pem" ]]; then
+            openssl x509 -enddate -noout -in "${dir}/fullchain.pem" 2>/dev/null
+        fi
+    done
+    if [[ ${found} -eq 0 ]]; then
+        LOGI "暂无已管理证书"
+    fi
+}
+
+renew_certificate() {
+    local domain=""
+    read -p "请输入要续期的域名:" domain
+    if [[ -z "${domain}" ]]; then
+        LOGE "域名不能为空"
+        return 1
+    fi
+    if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
+        LOGE "未找到 acme.sh"
+        return 1
+    fi
+    local dir
+    dir=$(cert_domain_dir "${domain}")
+    mkdir -p "${dir}"
+    ~/.acme.sh/acme.sh --renew -d "${domain}" --force
+    if [[ $? -ne 0 ]]; then
+        LOGE "证书续期失败"
+        return 1
+    fi
+    ~/.acme.sh/acme.sh --installcert -d "${domain}" --cert-file "${dir}/cert.pem" \
+        --key-file "${dir}/privkey.pem" --fullchain-file "${dir}/fullchain.pem" \
+        --ca-file "${dir}/ca.cer"
+    if [[ $? -ne 0 ]]; then
+        LOGE "证书安装失败"
+        return 1
+    fi
+    write_cert_meta "${domain}" "acme.sh" "true"
+    LOGI "证书续期完成: ${dir}"
+}
+
+delete_certificate() {
+    local domain=""
+    read -p "请输入要删除的域名:" domain
+    if [[ -z "${domain}" ]]; then
+        LOGE "域名不能为空"
+        return 1
+    fi
+    local dir
+    dir=$(cert_domain_dir "${domain}")
+    if [[ ! -d "${dir}" ]]; then
+        LOGE "证书不存在: ${dir}"
+        return 1
+    fi
+    confirm "确认删除 ${dir} 吗" "n"
+    if [[ $? -ne 0 ]]; then
+        return 0
+    fi
+    rm -rf "${dir}"
+    LOGI "证书已删除: ${domain}"
+}
+
+sql_escape() {
+    echo "$1" | sed "s/'/''/g"
+}
+
+save_panel_cert_setting() {
+    local cert_file="$1"
+    local key_file="$2"
+    if [[ ! -f "${cert_file}" || ! -f "${key_file}" ]]; then
+        LOGE "证书或私钥文件不存在"
+        return 1
+    fi
+    if ! command -v sqlite3 &>/dev/null; then
+        LOGE "未找到 sqlite3，无法写入面板设置"
+        return 1
+    fi
+    local cert_sql key_sql
+    cert_sql=$(sql_escape "${cert_file}")
+    key_sql=$(sql_escape "${key_file}")
+    sqlite3 "${XUI_DB_PATH}" "DELETE FROM settings WHERE key IN ('webCertFile','webKeyFile'); INSERT INTO settings (key,value) VALUES ('webCertFile','${cert_sql}'); INSERT INTO settings (key,value) VALUES ('webKeyFile','${key_sql}');"
+    if [[ $? -ne 0 ]]; then
+        LOGE "面板 HTTPS 证书设置失败"
+        return 1
+    fi
+    LOGI "面板 HTTPS 证书已设置，重启面板后生效"
+    confirm_restart
+}
+
+set_panel_https_certificate() {
+    list_certificates
+    local domain=""
+    read -p "请输入要设置为面板 HTTPS 的域名:" domain
+    if [[ -z "${domain}" ]]; then
+        LOGE "域名不能为空"
+        return 1
+    fi
+    local dir
+    dir=$(cert_domain_dir "${domain}")
+    save_panel_cert_setting "${dir}/fullchain.pem" "${dir}/privkey.pem"
+}
+
+cert_manage() {
+    echo -e "
+  ${green}证书管理${plain}
+  ${green}0.${plain} 返回主菜单
+  ${green}1.${plain} 申请证书
+  ${green}2.${plain} 查看证书
+  ${green}3.${plain} 续期证书
+  ${green}4.${plain} 删除证书
+  ${green}5.${plain} 设置面板HTTPS证书
+ "
+    echo && read -p "请输入选择 [0-5]: " num
+    case "${num}" in
+    0)
+        show_menu
+        ;;
+    1)
+        ssl_cert_issue
+        ;;
+    2)
+        list_certificates
+        ;;
+    3)
+        renew_certificate
+        ;;
+    4)
+        delete_certificate
+        ;;
+    5)
+        set_panel_https_certificate
+        ;;
+    *)
+        LOGE "请输入正确的数字 [0-5]"
+        ;;
+    esac
+}
+
 #this will be an entrance for ssl cert issue
 #here we can provide two different methods to issue cert
 #first.standalone mode second.DNS API mode
@@ -447,7 +642,7 @@ ssl_cert_issue() {
     local method=""
     echo -E ""
     LOGD "******使用说明******"
-    LOGI "该脚本提供两种方式实现证书签发,证书安装路径均为/root/cert"
+    LOGI "该脚本提供两种方式实现证书签发,证书安装路径为${XUI_CERT_DIR}/域名"
     LOGI "方式1:acme standalone mode,需要保持端口开放"
     LOGI "方式2:acme DNS API mode,需要提供Cloudflare Global API Key"
     LOGI "如域名属于免费域名,则推荐使用方式1进行申请"
@@ -500,17 +695,12 @@ ssl_cert_issue_standalone() {
     else
         LOGI "socat安装成功..."
     fi
-    #creat a directory for install cert
-    certPath=/root/cert
-    if [ ! -d "$certPath" ]; then
-        mkdir $certPath
-    fi
     #get the domain here,and we need verify it
     local domain=""
     read -p "请输入你的域名:" domain
     LOGD "你输入的域名为:${domain},正在进行域名合法性校验..."
     #here we need to judge whether there exists cert already
-    local currentCert=$(~/.acme.sh/acme.sh --list | grep ${domain} | wc -l)
+    local currentCert=$(~/.acme.sh/acme.sh --list | grep "${domain}" | wc -l)
     if [ ${currentCert} -ne 0 ]; then
         local certInfo=$(~/.acme.sh/acme.sh --list)
         LOGE "域名合法性校验失败,当前环境已有对应域名证书,不可重复申请,当前证书详情:"
@@ -518,6 +708,11 @@ ssl_cert_issue_standalone() {
         exit 1
     else
         LOGI "域名合法性校验通过..."
+    fi
+    #creat a directory for install cert
+    certPath=$(cert_domain_dir "${domain}")
+    if [ ! -d "$certPath" ]; then
+        mkdir -p "$certPath"
     fi
     #get needed port here
     local WebPort=80
@@ -538,9 +733,9 @@ ssl_cert_issue_standalone() {
         LOGI "证书申请成功,开始安装证书..."
     fi
     #install cert
-    ~/.acme.sh/acme.sh --installcert -d ${domain} --ca-file /root/cert/ca.cer \
-        --cert-file /root/cert/${domain}.cer --key-file /root/cert/${domain}.key \
-        --fullchain-file /root/cert/fullchain.ce
+    ~/.acme.sh/acme.sh --installcert -d ${domain} --ca-file "${certPath}/ca.cer" \
+        --cert-file "${certPath}/cert.pem" --key-file "${certPath}/privkey.pem" \
+        --fullchain-file "${certPath}/fullchain.pem"
 
     if [ $? -ne 0 ]; then
         LOGE "证书安装失败,脚本退出"
@@ -549,15 +744,16 @@ ssl_cert_issue_standalone() {
     else
         LOGI "证书安装成功,开启自动更新..."
     fi
+    write_cert_meta "${domain}" "standalone" "true"
     ~/.acme.sh/acme.sh --upgrade --auto-upgrade
     if [ $? -ne 0 ]; then
         LOGE "自动更新设置失败,脚本退出"
-        ls -lah cert
+        ls -lah "${certPath}"
         chmod 755 $certPath
         exit 1
     else
         LOGI "证书已安装且已开启自动更新,具体信息如下"
-        ls -lah cert
+        ls -lah "${certPath}"
         chmod 755 $certPath
     fi
 
@@ -571,7 +767,7 @@ ssl_cert_issue_by_cloudflare() {
     LOGI "1.知晓Cloudflare 注册邮箱"
     LOGI "2.知晓Cloudflare Global API Key"
     LOGI "3.域名已通过Cloudflare进行解析到当前服务器"
-    LOGI "4.该脚本申请证书默认安装路径为/root/cert目录"
+    LOGI "4.该脚本申请证书默认安装路径为${XUI_CERT_DIR}/域名"
     confirm "我已确认以上内容[y/n]" "y"
     if [ $? -eq 0 ]; then
         install_acme
@@ -582,15 +778,11 @@ ssl_cert_issue_by_cloudflare() {
         CF_Domain=""
         CF_GlobalKey=""
         CF_AccountEmail=""
-        certPath=/root/cert
-        if [ ! -d "$certPath" ]; then
-            mkdir $certPath
-        fi
         LOGD "请设置域名:"
         read -p "Input your domain here:" CF_Domain
         LOGD "你的域名设置为:${CF_Domain},正在进行域名合法性校验..."
         #here we need to judge whether there exists cert already
-        local currentCert=$(~/.acme.sh/acme.sh --list | grep ${CF_Domain} | wc -l)
+        local currentCert=$(~/.acme.sh/acme.sh --list | grep "${CF_Domain}" | wc -l)
         if [ ${currentCert} -ne 0 ]; then
             local certInfo=$(~/.acme.sh/acme.sh --list)
             LOGE "域名合法性校验失败,当前环境已有对应域名证书,不可重复申请,当前证书详情:"
@@ -598,6 +790,10 @@ ssl_cert_issue_by_cloudflare() {
             exit 1
         else
             LOGI "域名合法性校验通过..."
+        fi
+        certPath=$(cert_domain_dir "${CF_Domain}")
+        if [ ! -d "$certPath" ]; then
+            mkdir -p "$certPath"
         fi
         LOGD "请设置API密钥:"
         read -p "Input your key here:" CF_GlobalKey
@@ -620,9 +816,9 @@ ssl_cert_issue_by_cloudflare() {
         else
             LOGI "证书签发成功,安装中..."
         fi
-        ~/.acme.sh/acme.sh --installcert -d ${CF_Domain} -d *.${CF_Domain} --ca-file /root/cert/ca.cer \
-            --cert-file /root/cert/${CF_Domain}.cer --key-file /root/cert/${CF_Domain}.key \
-            --fullchain-file /root/cert/fullchain.ce
+        ~/.acme.sh/acme.sh --installcert -d ${CF_Domain} -d *.${CF_Domain} --ca-file "${certPath}/ca.cer" \
+            --cert-file "${certPath}/cert.pem" --key-file "${certPath}/privkey.pem" \
+            --fullchain-file "${certPath}/fullchain.pem"
         if [ $? -ne 0 ]; then
             LOGE "证书安装失败,脚本退出"
             rm -rf ~/.acme.sh/${CF_Domain}
@@ -630,15 +826,16 @@ ssl_cert_issue_by_cloudflare() {
         else
             LOGI "证书安装成功,开启自动更新..."
         fi
+        write_cert_meta "${CF_Domain}" "cloudflare" "true"
         ~/.acme.sh/acme.sh --upgrade --auto-upgrade
         if [ $? -ne 0 ]; then
             LOGE "自动更新设置失败,脚本退出"
-            ls -lah cert
+            ls -lah "${certPath}"
             chmod 755 $certPath
             exit 1
         else
             LOGI "证书已安装且已开启自动更新,具体信息如下"
-            ls -lah cert
+            ls -lah "${certPath}"
             chmod 755 $certPath
         fi
     else
@@ -844,7 +1041,7 @@ show_menu() {
   ${green}14.${plain} 取消 x-ui 开机自启
 ————————————————
   ${green}15.${plain} 一键安装 bbr (最新内核)
-  ${green}16.${plain} 一键申请SSL证书(acme申请)
+  ${green}16.${plain} 证书管理
   ${green}17.${plain} 配置x-ui定时任务
  "
     show_status
@@ -900,7 +1097,7 @@ show_menu() {
         install_bbr
         ;;
     16)
-        ssl_cert_issue
+        cert_manage
         ;;
     17)
         check_install && cron_jobs

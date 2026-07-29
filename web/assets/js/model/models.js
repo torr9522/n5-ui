@@ -282,3 +282,34 @@ class AllSetting {
         return ObjectUtil.equals(this, other);
     }
 }
+
+const certificateStore = {
+    certificates: [],
+    loading: false,
+    loaded: false,
+    async load(force=false) {
+        if (this.loaded && !force) {
+            return;
+        }
+        this.loading = true;
+        const msg = await HttpUtil.post('/xui/certificates/discover');
+        this.loading = false;
+        if (!msg.success) {
+            return;
+        }
+        this.certificates.splice(0, this.certificates.length, ...(msg.obj || []));
+        this.loaded = true;
+    },
+    get validCertificates() {
+        return this.certificates.filter(cert => cert.valid);
+    },
+    getValue(cert) {
+        if (!cert) {
+            return '';
+        }
+        return `${cert.certFile}|${cert.keyFile}`;
+    },
+    findByValue(value) {
+        return this.certificates.find(cert => this.getValue(cert) === value);
+    },
+};

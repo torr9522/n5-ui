@@ -11,6 +11,7 @@ type XUIController struct {
 	settingController      *SettingController
 	accessIPController     *AccessIPController
 	shareAddressController *ShareAddressController
+	certificateController  *CertificateController
 }
 
 func NewXUIController(g *gin.RouterGroup) *XUIController {
@@ -32,6 +33,7 @@ func (a *XUIController) initRouter(g *gin.RouterGroup) {
 	a.settingController = NewSettingController(g)
 	a.accessIPController = NewAccessIPController(g)
 	a.shareAddressController = NewShareAddressController(g)
+	a.certificateController = NewCertificateController(g)
 }
 
 func (a *XUIController) index(c *gin.Context) {

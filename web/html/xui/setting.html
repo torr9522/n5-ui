@@ -40,6 +40,20 @@
                             <a-list item-layout="horizontal" style="background: white">
                                 <setting-list-item type="text" title="面板监听 IP" desc="默认留空监听所有 IP，重启面板生效" v-model="allSetting.webListen"></setting-list-item>
                                 <setting-list-item type="number" title="面板监听端口" desc="重启面板生效" v-model.number="allSetting.webPort"></setting-list-item>
+                                <a-list-item>
+                                    <a-list-item-meta title="已有证书" description="选择后自动填充面板 HTTPS 证书路径，保存并重启面板生效"></a-list-item-meta>
+                                    <a-select allow-clear style="width: 320px"
+                                              :loading="certificateStore.loading"
+                                              placeholder="选择证书"
+                                              @dropdownVisibleChange="open => open && certificateStore.load()"
+                                              @change="selectPanelCertificate">
+                                        <a-select-option v-for="cert in certificateStore.validCertificates"
+                                                         :key="certificateStore.getValue(cert)"
+                                                         :value="certificateStore.getValue(cert)">
+                                            [[ cert.domain ]] [[ cert.expire ? DateUtil.formatMillis(cert.expire * 1000) : '' ]]
+                                        </a-select-option>
+                                    </a-select>
+                                </a-list-item>
                                 <setting-list-item type="text" title="面板证书公钥文件路径" desc="填写一个 '/' 开头的绝对路径，重启面板生效" v-model="allSetting.webCertFile"></setting-list-item>
                                 <setting-list-item type="text" title="面板证书密钥文件路径" desc="填写一个 '/' 开头的绝对路径，重启面板生效" v-model="allSetting.webKeyFile"></setting-list-item>
                                 <setting-list-item type="text" title="面板 url 根路径" desc="必须以 '/' 开头，以 '/' 结尾，重启面板生效" v-model="allSetting.webBasePath"></setting-list-item>
@@ -96,6 +110,7 @@
             allSetting: new AllSetting(),
             saveBtnDisable: true,
             user: {},
+            certificateStore,
         },
         methods: {
             loading(spinning = true) {
@@ -127,6 +142,14 @@
                     this.user = {};
                 }
             },
+            selectPanelCertificate(value) {
+                const cert = certificateStore.findByValue(value);
+                if (!cert) {
+                    return;
+                }
+                this.allSetting.webCertFile = cert.certFile;
+                this.allSetting.webKeyFile = cert.keyFile;
+            },
             async restartPanel() {
                 await new Promise(resolve => {
                     this.$confirm({
@@ -149,6 +172,7 @@
         },
         async mounted() {
             await this.getAllSetting();
+            certificateStore.load();
             while (true) {
                 await PromiseUtil.sleep(1000);
                 this.saveBtnDisable = this.oldAllSetting.equals(this.allSetting);
