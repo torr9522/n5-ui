@@ -19,9 +19,15 @@ func (a *RealityController) initRouter(g *gin.RouterGroup) {
 	g = g.Group("/reality")
 
 	g.POST("/x25519", a.generateX25519KeyPair)
+	g.POST("/default", a.generateDefaultConfig)
 }
 
 func (a *RealityController) generateX25519KeyPair(c *gin.Context) {
 	keyPair, err := a.realityService.GenerateX25519KeyPair()
 	jsonObj(c, keyPair, err)
+}
+
+func (a *RealityController) generateDefaultConfig(c *gin.Context) {
+	config, err := a.realityService.GenerateDefaultConfig()
+	jsonObj(c, config, err)
 }
