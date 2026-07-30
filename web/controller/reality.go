@@ -28,6 +28,10 @@ func (a *RealityController) generateX25519KeyPair(c *gin.Context) {
 }
 
 func (a *RealityController) generateDefaultConfig(c *gin.Context) {
-	config, err := a.realityService.GenerateDefaultConfig()
+	template := c.Query("template")
+	if template == "" {
+		template = c.PostForm("template")
+	}
+	config, err := a.realityService.GenerateDefaultConfig(template)
 	jsonObj(c, config, err)
 }

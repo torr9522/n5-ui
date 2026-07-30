@@ -70,6 +70,7 @@
             certificateStore: certificateStore,
             realityKeyGenerating: false,
             realityConfigGenerating: false,
+            realityConfigTemplate: 'cloudflare',
             get inbound() {
                 return inModal.inbound;
             },
@@ -136,16 +137,19 @@
             async generateRealityConfig() {
                 this.realityConfigGenerating = true;
                 try {
-                    const msg = await HttpUtil.post('/xui/reality/default');
+                    const template = this.realityConfigTemplate || 'cloudflare';
+                    const msg = await HttpUtil.post(`/xui/reality/default?template=${encodeURIComponent(template)}`);
                     if (!msg.success) {
                         return;
                     }
                     const reality = msg.obj;
-                    this.inbound.stream.reality.dest = reality.dest;
-                    this.inbound.stream.reality.serverNames = reality.serverNames;
+                    if (template !== 'custom') {
+                        this.inbound.stream.reality.dest = reality.dest;
+                        this.inbound.stream.reality.serverNames = reality.serverNames;
+                        this.inbound.stream.reality.fingerprint = reality.fingerprint;
+                        this.inbound.stream.reality.spiderX = reality.spiderX;
+                    }
                     this.inbound.stream.reality.shortIds = reality.shortIds;
-                    this.inbound.stream.reality.fingerprint = reality.fingerprint;
-                    this.inbound.stream.reality.spiderX = reality.spiderX;
                     this.inbound.stream.reality.privateKey = reality.privateKey;
                     this.inbound.stream.reality.publicKey = reality.publicKey;
                 } finally {

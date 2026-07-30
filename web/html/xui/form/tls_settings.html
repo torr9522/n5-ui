@@ -65,7 +65,16 @@
 <!-- reality settings -->
 <a-form v-if="inbound.reality"
         layout="inline">
-    <a-form-item label="default">
+    <a-form-item label="template">
+        <a-select v-model="realityConfigTemplate" style="width: 150px">
+            <a-select-option value="cloudflare">Cloudflare</a-select-option>
+            <a-select-option value="apple">Apple</a-select-option>
+            <a-select-option value="google">Google</a-select-option>
+            <a-select-option value="microsoft">Microsoft</a-select-option>
+            <a-select-option value="custom">自定义</a-select-option>
+        </a-select>
+    </a-form-item>
+    <a-form-item label="generate">
         <a-button size="small" :loading="realityConfigGenerating" @click="generateRealityConfig">
             生成Reality配置
         </a-button>
