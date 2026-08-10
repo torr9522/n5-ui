@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<body>
+<a-layout id="app" v-cloak>
+    {{ template "commonSider" . }}
+    <a-layout id="content-layout">
+        <a-layout-content style="margin: 24px 16px;">
+            <a-card title="添加出口规则">
+                <a-form layout="vertical">
+                    <a-row :gutter="12">
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="入口节点">
+                                <a-select v-model="form.inboundId" style="width: 100%">
+                                    <a-select-option v-for="item in inbounds" :key="item.id" :value="item.id">
+                                        [[ item.name ]]
+                                    </a-select-option>
+                                </a-select>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="流量类型">
+                                <a-select v-model="form.trafficType" style="width: 100%">
+                                    <a-select-option v-for="item in trafficTypes" :key="item.value" :value="item.value">
+                                        [[ item.label ]]
+                                    </a-select-option>
+                                </a-select>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="出口">
+                                <a-select v-model="form.egressId" style="width: 100%">
+                                    <a-select-option v-for="item in egresses" :key="item.id" :value="item.id">
+                                        [[ item.name ]]
+                                    </a-select-option>
+                                </a-select>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+                    <a-row :gutter="12" v-if="form.trafficType === 'custom-domain'">
+                        <a-col :xs="24" :sm="16">
+                            <a-form-item label="自定义域名">
+                                <a-input v-model.trim="form.customDomain" placeholder="支持 full:api.ipify.org / domain:openai.com / keyword:netflix"></a-input>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+                    <a-button type="primary" @click="createRule">添加</a-button>
+                    <a-button style="margin-left: 8px" @click="resetForm">重置</a-button>
+                    <a-button style="margin-left: 8px" @click="openSimpleEgress">返回出口</a-button>
+                </a-form>
+            </a-card>
+
+            <a-card title="规则列表" style="margin-top: 16px;">
+                <a-table :data-source="rules" :pagination="false" :row-key="row => row.id">
+                    <a-table-column title="入口">
+                        <template slot-scope="text, row">
+                            [[ row.inboundName ]]
+                        </template>
+                    </a-table-column>
+                    <a-table-column title="流量类型">
+                        <template slot-scope="text, row">
+                            <span>[[ row.trafficLabel ]]</span>
+                            <div v-if="row.customDomain" style="color: rgba(0, 0, 0, 0.45); font-size: 12px;">
+                                [[ row.customDomain ]]
+                            </div>
+                        </template>
+                    </a-table-column>
+                    <a-table-column title="出口">
+                        <template slot-scope="text, row">
+                            [[ row.egressName ]]
+                        </template>
+                    </a-table-column>
+                    <a-table-column title="状态">
+                        <template slot-scope="text, row">
+                            <a-tag :color="row.enabled ? 'green' : 'default'">[[ row.status ]]</a-tag>
+                        </template>
+                    </a-table-column>
+                    <a-table-column title="操作">
+                        <template slot-scope="text, row">
+                            <a-button size="small" type="danger" @click="deleteRule(row)">删除</a-button>
+                        </template>
+                    </a-table-column>
+                </a-table>
+            </a-card>
+        </a-layout-content>
+    </a-layout>
+</a-layout>
+{{template "js" .}}
+<script>
+    const defaultRuleForm = () => ({
+        inboundId: undefined,
+        trafficType: 'all',
+        egressId: undefined,
+        customDomain: '',
+    });
+
+    const app = new Vue({
+        el: '#app',
+        delimiters: ['[[', ']]'],
+        data: {
+            rules: [],
+            inbounds: [],
+            egresses: [],
+            trafficTypes: [],
+            form: defaultRuleForm(),
+        },
+        methods: {
+            async loadRules() {
+                const msg = await HttpUtil.get('/n5/api/simple/rule/list');
+                if (!msg.success || !msg.obj) {
+                    return;
+                }
+                this.rules = msg.obj.rules || [];
+                this.inbounds = msg.obj.inbounds || [];
+                this.egresses = msg.obj.egresses || [];
+                this.trafficTypes = msg.obj.trafficTypes || [];
+                if (!this.form.inboundId && this.inbounds.length > 0) {
+                    this.form.inboundId = this.inbounds[0].id;
+                }
+                if (!this.form.egressId && this.egresses.length > 0) {
+                    this.form.egressId = this.egresses[0].id;
+                }
+            },
+            resetForm() {
+                this.form = defaultRuleForm();
+                if (this.inbounds.length > 0) {
+                    this.form.inboundId = this.inbounds[0].id;
+                }
+                if (this.egresses.length > 0) {
+                    this.form.egressId = this.egresses[0].id;
+                }
+            },
+            async createRule() {
+                const payload = Object.assign({}, this.form);
+                if (payload.trafficType !== 'custom-domain') {
+                    payload.customDomain = '';
+                }
+                const msg = await HttpUtil.post('/n5/api/simple/rule/add', payload);
+                if (msg.success) {
+                    await this.loadRules();
+                    this.resetForm();
+                }
+            },
+            async deleteRule(row) {
+                const msg = await HttpUtil.post('/n5/api/simple/rule/delete', { id: row.id });
+                if (msg.success) {
+                    await this.loadRules();
+                }
+            },
+            openSimpleEgress() {
+                location.href = `${basePath}n5/simple`;
+            },
+        },
+        async mounted() {
+            await this.loadRules();
+            this.resetForm();
+        },
+    });
+</script>
+</body>
+</html>

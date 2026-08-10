@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+{{template "head" .}}
+<body>
+<a-layout id="app" v-cloak>
+    {{ template "commonSider" . }}
+    <a-layout id="content-layout">
+        <a-layout-content style="margin: 24px 16px;">
+            <a-card title="编辑出口">
+                <a-form layout="vertical">
+                    <a-row :gutter="12">
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="名称">
+                                <a-input v-model.trim="form.name"></a-input>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="协议">
+                                <a-select v-model="form.protocol" style="width: 100%">
+                                    <a-select-option value="socks5">SOCKS5</a-select-option>
+                                    <a-select-option value="ss">SS</a-select-option>
+                                </a-select>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="地址">
+                                <a-input v-model.trim="form.address" placeholder="IP 或域名"></a-input>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+                    <a-row :gutter="12">
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="端口">
+                                <a-input-number v-model="form.port" :min="1" :max="65535" style="width: 100%"></a-input-number>
+                            </a-form-item>
+                        </a-col>
+                        <a-col v-if="form.protocol === 'socks5'" :xs="24" :sm="8">
+                            <a-form-item label="用户名">
+                                <a-input v-model.trim="form.username"></a-input>
+                            </a-form-item>
+                        </a-col>
+                        <a-col v-if="form.protocol === 'socks5'" :xs="24" :sm="8">
+                            <a-form-item label="密码">
+                                <a-input-password v-model.trim="form.password"></a-input-password>
+                            </a-form-item>
+                        </a-col>
+                        <a-col v-if="form.protocol === 'ss'" :xs="24" :sm="8">
+                            <a-form-item label="加密方式">
+                                <a-select v-model="form.method" style="width: 100%">
+                                    <a-select-option value="aes-128-gcm">aes-128-gcm</a-select-option>
+                                    <a-select-option value="aes-256-gcm">aes-256-gcm</a-select-option>
+                                    <a-select-option value="chacha20-poly1305">chacha20-poly1305</a-select-option>
+                                    <a-select-option value="xchacha20-poly1305">xchacha20-poly1305</a-select-option>
+                                </a-select>
+                            </a-form-item>
+                        </a-col>
+                        <a-col v-if="form.protocol === 'ss'" :xs="24" :sm="8">
+                            <a-form-item label="密码">
+                                <a-input-password v-model.trim="form.password"></a-input-password>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+                    <a-button type="primary" @click="updateEgress">保存</a-button>
+                    <a-button style="margin-left: 8px" @click="goBack">返回</a-button>
+                </a-form>
+            </a-card>
+        </a-layout-content>
+    </a-layout>
+</a-layout>
+{{template "js" .}}
+<script>
+    const defaultEditForm = () => ({
+        id: 0,
+        name: '',
+        protocol: 'socks5',
+        address: '',
+        port: 1080,
+        username: '',
+        method: 'aes-256-gcm',
+        password: '',
+        enabled: true,
+    });
+
+    const app = new Vue({
+        el: '#app',
+        delimiters: ['[[', ']]'],
+        data: {
+            egressId: 0,
+            form: defaultEditForm(),
+        },
+        methods: {
+            normalizeForm() {
+                if (this.form.protocol === 'socks5') {
+                    this.form.method = 'aes-256-gcm';
+                } else if (this.form.protocol === 'ss') {
+                    this.form.username = '';
+                }
+            },
+            parseId() {
+                const params = new URLSearchParams(location.search);
+                return Number(params.get('id') || 0);
+            },
+            async loadEgress() {
+                const msg = await HttpUtil.get(`/n5/api/simple/egress/get/${this.egressId}`);
+                if (!msg.success || !msg.obj) {
+                    return;
+                }
+                this.form = Object.assign(defaultEditForm(), msg.obj);
+            },
+            async updateEgress() {
+                this.normalizeForm();
+                const msg = await HttpUtil.post(`/n5/api/simple/egress/update/${this.egressId}`, this.form);
+                if (msg.success) {
+                    location.href = `${basePath}n5/simple`;
+                }
+            },
+            goBack() {
+                location.href = `${basePath}n5/simple`;
+            },
+        },
+        async mounted() {
+            this.egressId = this.parseId();
+            if (this.egressId > 0) {
+                await this.loadEgress();
+            }
+        },
+        watch: {
+            'form.protocol'(value) {
+                if (value === 'socks5') {
+                    this.form.method = 'aes-256-gcm';
+                } else if (value === 'ss') {
+                    this.form.username = '';
+                }
+            },
+        },
+    });
+</script>
+</body>
+</html>

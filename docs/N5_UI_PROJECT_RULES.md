@@ -1,14 +1,14 @@
-# N3-UI Project Rules
+# N5-UI Project Rules
 
 ## Project Identity
 
-- Project name: `n3-ui`
-- Source baseline: `n2-ui`
-- Development model: source-level fork based on `n2-ui`
+- Project name: `n5-ui`
+- Source baseline: `n3-ui`
+- Development model: source-level fork based on `n3-ui`
 
 ## Runtime Compatibility
 
-`n3-ui` must continue to run as an `x-ui` compatible panel. Existing user environments, service names, commands, paths, database files, and API paths must remain compatible.
+`n5-ui` must continue to run as an `x-ui` compatible panel. Existing user environments, service names, commands, paths, database files, and API paths must remain compatible.
 
 ## Must Keep Unchanged
 
@@ -24,11 +24,10 @@
 
 ## Allowed Development Areas
 
-- New product features
-- Protocol support fixes and enhancements
-- Certificate system improvements
-- Web panel usability enhancements
-- CLI command enhancements that preserve `x-ui` command compatibility
+- Brand presentation updates
+- Project documentation updates
+- Repository metadata updates
+- Future feature work only after compatibility review
 
 ## Compatibility Rules
 
@@ -39,4 +38,3 @@
 - Do not change existing `/xui/` API paths unless backward compatible aliases remain.
 - Do not mass-replace `x-ui` strings only for branding.
 - Document every compatibility-sensitive change before implementation.
-

@@ -1,0 +1,232 @@
+package simple
+
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"x-ui/config"
+	"x-ui/util/common"
+	"x-ui/web/entity"
+	simpleservice "x-ui/web/service/n5/simple"
+	"x-ui/web/session"
+
+	"github.com/gin-gonic/gin"
+)
+
+type egressAPI interface {
+	ListSimpleEgress() ([]*simpleservice.SimpleEgress, error)
+	GetSimpleEgress(id int) (*simpleservice.SimpleEgress, error)
+	CreateSimpleEgress(req *simpleservice.CreateSimpleEgressRequest) (*simpleservice.SimpleEgress, error)
+	UpdateSimpleEgress(id int, req *simpleservice.CreateSimpleEgressRequest) (*simpleservice.SimpleEgress, error)
+	DeleteSimpleEgress(id int) error
+	TestSimpleEgress(id int) (*simpleservice.SimpleEgressTestResult, error)
+}
+
+type EgressController struct {
+	service egressAPI
+}
+
+func NewEgressController(g *gin.RouterGroup) *EgressController {
+	a := &EgressController{
+		service: simpleservice.NewEgressService(),
+	}
+	a.initRouter(g)
+	return a
+}
+
+func (a *EgressController) initRouter(g *gin.RouterGroup) {
+	pageGroup := g.Group("/n5")
+	pageGroup.Use(checkLogin)
+	pageGroup.GET("/simple", a.page)
+	pageGroup.GET("/simple/edit", a.editPage)
+
+	apiGroup := g.Group("/n5/api/simple/egress")
+	apiGroup.Use(checkLogin)
+	apiGroup.GET("/list", a.list)
+	apiGroup.GET("/get/:id", a.get)
+	apiGroup.POST("/add", a.add)
+	apiGroup.POST("/update/:id", a.update)
+	apiGroup.POST("/test", a.test)
+	apiGroup.POST("/delete", a.del)
+}
+
+func (a *EgressController) page(c *gin.Context) {
+	html(c, "simple.html", "N5出口", nil)
+}
+
+func (a *EgressController) editPage(c *gin.Context) {
+	html(c, "simple_egress_edit.html", "编辑出口", nil)
+}
+
+func (a *EgressController) list(c *gin.Context) {
+	records, err := a.service.ListSimpleEgress()
+	if err != nil {
+		jsonMsg(c, "list simple egress", err)
+		return
+	}
+	jsonObj(c, records, nil)
+}
+
+func (a *EgressController) get(c *gin.Context) {
+	id := parseID(c.Param("id"))
+	if id <= 0 {
+		jsonMsg(c, "get simple egress", common.NewError("invalid simple egress id"))
+		return
+	}
+	record, err := a.service.GetSimpleEgress(id)
+	if err != nil {
+		jsonMsg(c, "get simple egress", err)
+		return
+	}
+	jsonObj(c, record, nil)
+}
+
+func (a *EgressController) add(c *gin.Context) {
+	record := &simpleservice.CreateSimpleEgressRequest{}
+	if err := c.ShouldBind(record); err != nil {
+		jsonMsg(c, "add simple egress", err)
+		return
+	}
+	if !record.Enabled {
+		record.Enabled = true
+	}
+	created, err := a.service.CreateSimpleEgress(record)
+	if err != nil {
+		jsonMsg(c, "add simple egress", err)
+		return
+	}
+	jsonObj(c, created, nil)
+}
+
+func (a *EgressController) update(c *gin.Context) {
+	id := parseID(c.Param("id"))
+	if id <= 0 {
+		jsonMsg(c, "update simple egress", common.NewError("invalid simple egress id"))
+		return
+	}
+	record := &simpleservice.CreateSimpleEgressRequest{}
+	if err := c.ShouldBind(record); err != nil {
+		jsonMsg(c, "update simple egress", err)
+		return
+	}
+	if !record.Enabled {
+		record.Enabled = true
+	}
+	updated, err := a.service.UpdateSimpleEgress(id, record)
+	if err != nil {
+		jsonMsg(c, "update simple egress", err)
+		return
+	}
+	jsonObj(c, updated, nil)
+}
+
+func (a *EgressController) test(c *gin.Context) {
+	payload := struct {
+		Id int `json:"id" form:"id"`
+	}{}
+	if err := c.ShouldBind(&payload); err != nil {
+		jsonMsg(c, "test simple egress", err)
+		return
+	}
+	record, err := a.service.TestSimpleEgress(payload.Id)
+	if err != nil {
+		jsonMsg(c, "test simple egress", err)
+		return
+	}
+	jsonObj(c, record, nil)
+}
+
+func (a *EgressController) del(c *gin.Context) {
+	payload := struct {
+		Id int `json:"id" form:"id"`
+	}{}
+	if err := c.ShouldBind(&payload); err != nil {
+		jsonMsg(c, "delete simple egress", err)
+		return
+	}
+	jsonMsg(c, "delete simple egress", a.service.DeleteSimpleEgress(payload.Id))
+}
+
+func checkLogin(c *gin.Context) {
+	if !session.IsLogin(c) {
+		if isAjax(c) {
+			pureJsonMsg(c, false, "登录时效已过，请重新登录")
+		} else {
+			c.Redirect(http.StatusTemporaryRedirect, c.GetString("base_path"))
+		}
+		c.Abort()
+		return
+	}
+	c.Next()
+}
+
+func isAjax(c *gin.Context) bool {
+	return c.GetHeader("X-Requested-With") == "XMLHttpRequest"
+}
+
+func jsonMsg(c *gin.Context, msg string, err error) {
+	jsonMsgObj(c, msg, nil, err)
+}
+
+func jsonObj(c *gin.Context, obj interface{}, err error) {
+	jsonMsgObj(c, "", obj, err)
+}
+
+func jsonMsgObj(c *gin.Context, msg string, obj interface{}, err error) {
+	m := entity.Msg{Obj: obj}
+	if err == nil {
+		m.Success = true
+		if msg != "" {
+			m.Msg = msg + "成功"
+		}
+	} else {
+		m.Success = false
+		m.Msg = msg + "失败: " + err.Error()
+	}
+	c.JSON(http.StatusOK, m)
+}
+
+func pureJsonMsg(c *gin.Context, success bool, msg string) {
+	c.JSON(http.StatusOK, entity.Msg{
+		Success: success,
+		Msg:     msg,
+	})
+}
+
+func html(c *gin.Context, name string, title string, data gin.H) {
+	if data == nil {
+		data = gin.H{}
+	}
+	data["title"] = title
+	data["request_uri"] = c.Request.RequestURI
+	data["base_path"] = c.GetString("base_path")
+	data["cur_ver"] = config.GetVersion()
+	c.HTML(http.StatusOK, name, data)
+}
+
+func testFiles() []string {
+	files := make([]string, 0)
+	root := filepath.Join("..", "..", "..", "html")
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) == ".html" {
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files
+}
+
+func parseID(value string) int {
+	id, err := strconv.Atoi(value)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
+}

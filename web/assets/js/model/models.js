@@ -272,6 +272,7 @@ class AllSetting {
         this.webBasePath = "/";
 
         this.xrayTemplateConfig = "";
+        this.n5XrayExtensionEnable = false;
 
         this.timeLocation = "Asia/Shanghai";
 

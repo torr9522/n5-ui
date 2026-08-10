@@ -1,11 +1,20 @@
-# X-UI
+# N5-UI
 
 [简体中文](./README.md)| ENGLISH  
-X-UI is a webUI panel based on Xray-core which supports multi protocols and multi users  
+N5-UI is an independent fork based on n3-ui. Phase 1 only covers project identity migration and brand renaming.  
+Runtime compatibility with the `x-ui` ecosystem is intentionally preserved: service name, command name, paths, database, API, and Xray invocation logic remain unchanged.  
+N5-UI is a webUI panel based on Xray-core which supports multi protocols and multi users  
 This project is a fork of [vaxilu&#39;s project](https://github.com/vaxilu/x-ui),and it is a experiental project which used by myself for learning golang   
 If you need more language options ,please open a issue and let me know that
 
+## Branding Notes
+
+- Project brand: `n5-ui`
+- Runtime identity: `x-ui` compatible
+- Install command, binary name, service name, API path, and database layout are unchanged in this phase
+
 # Changes   
+- 2026.08.08：Create the independent `n5-ui` project and finish phase-1 branding migration while keeping `x-ui` runtime compatibility intact  
 - 2023.07.18：Random Reality dest and serverNames;more detailed sniffing settings available  
 - 2023.06.10：Enable TLS will reuse panel's certs and domain;add setting for ocspStapling;refactor device limit  
 - 2023.04.09：Support REALITY for now  
@@ -41,7 +50,7 @@ If you need more language options ,please open a issue and let me know that
 - support telegram bot notify and control
 - more functions in control menu  
 
-for more detailed usages,plz see [WIKI](https://github.com/torr9522/n3-ui/wiki)
+for more detailed usages,plz see [WIKI](https://github.com/torr9522/n5-ui/wiki)
 
 # Installation
 Make sure your system `bash` and `curl` and `network` are ready,here we go
@@ -117,4 +126,4 @@ if you want to purchase some virtual servers,you can purchase by my aff link:
 
 ## Stargazers over time
 
-[![Stargazers over time](https://starchart.cc/torr9522/n3-ui.svg)](https://starchart.cc/torr9522/n3-ui)
+[![Stargazers over time](https://starchart.cc/torr9522/n5-ui.svg)](https://starchart.cc/torr9522/n5-ui)

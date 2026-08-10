@@ -1,4 +1,4 @@
-# N3-UI Baseline
+# N5-UI Baseline
 
 ## Base Version
 
@@ -10,12 +10,12 @@
 ## Initialization
 
 - Initialized at: `2026-07-28T08:57:43Z`
-- Target project path: `/root/n3-ui`
+- Target project path: `/root/n5-ui`
 - Git branch: `main`
 
 ## Source Inventory
 
-- Copied source files before n3-ui documentation: `1146`
+- Copied source files before n5-ui documentation: `1146`
 - Source copy excluded from n2-ui transfer: source `.git` metadata and top-level built `x-ui` binary
 - Initial Git commit excludes compiled binaries and release packages via `.gitignore`
 
@@ -33,6 +33,5 @@
 
 - Trojan UI hidden issue: restored in the copied baseline by exposing `Protocols.TROJAN` in the inbound modal and allowing Trojan stream settings.
 - Certificate system: still uses the old model and requires a separate certificate-system design/implementation phase.
-- Branding: development project name is `n3-ui`, but runtime identity intentionally remains `x-ui` compatible.
+- Branding: development project name is `n5-ui`, but runtime identity intentionally remains `x-ui` compatible.
 - Build outputs and release packages are not part of the clean initial Git commit.
-

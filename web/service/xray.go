@@ -7,6 +7,7 @@ import (
 	"sync"
 	"x-ui/database/model"
 	"x-ui/logger"
+	n5service "x-ui/web/service/n5"
 	"x-ui/xray"
 )
 
@@ -68,25 +69,30 @@ func (s *XrayService) GetXrayVersion() string {
 }
 
 func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
+	xrayConfig, _, err := s.getXrayConfigWithMeta()
+	return xrayConfig, err
+}
+
+func (s *XrayService) getXrayConfigWithMeta() (*xray.Config, *n5service.XrayMergeResult, error) {
 	templateConfig, err := s.settingService.GetXrayConfigTemplate()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	xrayConfig := &xray.Config{}
 	err = json.Unmarshal([]byte(templateConfig), xrayConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	accessIPService := AccessIPService{}
 	err = accessIPService.ApplyAccessLogSetting(xrayConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	inbounds, err := s.inboundService.GetAllInbounds()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	allowPrivateOutboundNeeded := false
 	for _, inbound := range inbounds {
@@ -102,10 +108,25 @@ func (s *XrayService) GetXrayConfig() (*xray.Config, error) {
 	if allowPrivateOutboundNeeded {
 		err = s.ensureDokodemoTunnelRouting(xrayConfig, inbounds)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return xrayConfig, nil
+
+	enabled, err := s.settingService.GetN5XrayExtensionEnable()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !enabled {
+		return xrayConfig, nil, nil
+	}
+
+	mergeService := n5service.XrayMergeService{}
+	mergeResult, err := mergeService.MergeWithMeta(xrayConfig)
+	if err != nil {
+		return nil, nil, err
+	}
+	logger.Infof("N5 merge: outbounds=%d routing=%d bindings=%d", mergeResult.OutboundCount, mergeResult.RoutingRuleCount, mergeResult.BindingCount)
+	return mergeResult.Config, mergeResult, nil
 }
 
 func (s *XrayService) ensureDokodemoTunnelRouting(xrayConfig *xray.Config, inbounds []*model.Inbound) error {
@@ -194,20 +215,33 @@ func (s *XrayService) RestartXray(isForce bool) error {
 	defer lock.Unlock()
 	logger.Debug("restart xray, force:", isForce)
 
-	xrayConfig, err := s.GetXrayConfig()
+	mergeService := n5service.XrayMergeService{}
+	updateMergeHistory := func(mergeResult *n5service.XrayMergeResult, status string, applyErr error) {
+		if mergeResult == nil || mergeResult.HistoryID <= 0 {
+			return
+		}
+		if err := mergeService.UpdateHistoryStatus(mergeResult.HistoryID, status, applyErr); err != nil {
+			logger.Warningf("update N5 xray config history failed, id=%d status=%s err=%v", mergeResult.HistoryID, status, err)
+		}
+	}
+
+	xrayConfig, mergeResult, err := s.getXrayConfigWithMeta()
 	if err != nil {
 		return err
 	}
 
 	err = xray.TestConfig(xrayConfig)
 	if err != nil {
+		updateMergeHistory(mergeResult, n5service.XrayHistoryStatusFailed(), err)
 		return err
 	}
+	updateMergeHistory(mergeResult, n5service.XrayHistoryStatusValidated(), nil)
 
 	var oldConfig *xray.Config
 	if p != nil && p.IsRunning() {
 		if !isForce && p.GetConfig().Equals(xrayConfig) {
 			logger.Debug("not need to restart xray")
+			updateMergeHistory(mergeResult, n5service.XrayHistoryStatusApplied(), nil)
 			return nil
 		}
 		oldConfig = p.GetConfig()
@@ -218,8 +252,10 @@ func (s *XrayService) RestartXray(isForce bool) error {
 	result = ""
 	err = p.Start()
 	if err == nil {
+		updateMergeHistory(mergeResult, n5service.XrayHistoryStatusApplied(), nil)
 		return nil
 	}
+	updateMergeHistory(mergeResult, n5service.XrayHistoryStatusFailed(), err)
 	if oldConfig != nil {
 		logger.Warning("new xray start failed, trying rollback:", err)
 		rollbackProcess := xray.NewProcess(oldConfig)

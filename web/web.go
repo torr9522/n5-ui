@@ -24,6 +24,8 @@ import (
 	"x-ui/logger"
 	"x-ui/util/common"
 	"x-ui/web/controller"
+	n5controller "x-ui/web/controller/n5"
+	n5simplecontroller "x-ui/web/controller/n5/simple"
 	"x-ui/web/job"
 	"x-ui/web/network"
 	"x-ui/web/service"
@@ -205,6 +207,14 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	s.index = controller.NewIndexController(g)
 	s.server = controller.NewServerController(g)
 	s.xui = controller.NewXUIController(g)
+	n5controller.NewEgressController(g)
+	n5controller.NewEgressLabelController(g)
+	n5controller.NewPoolController(g)
+	n5controller.NewTrafficPolicyController(g)
+	n5controller.NewTrafficTemplateController(g)
+	n5controller.NewXrayController(g)
+	n5simplecontroller.NewEgressController(g)
+	n5simplecontroller.NewRuleController(g)
 
 	return engine, nil
 }

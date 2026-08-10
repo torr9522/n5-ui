@@ -1,12 +1,14 @@
-# X-UI
+# N5-UI
 简体中文|[ENGLISH](./README_EN.md)  
 
 > 声明：该项目仅供个人学习、交流，请遵守当地法律法规,勿用于非法用途;请勿用于生产环境  
 > 声明：该项目已闭源，介意者请勿使用；如您需要开源代码，请附上您的Github Profile邮箱联系  
 
+N5-UI 是基于 n3-ui 建立的独立二开项目，第一阶段仅完成项目身份迁移与品牌重命名。  
+运行时继续保持对 `x-ui` 生态的兼容：服务名、命令名、路径、数据库、API 与 Xray 调用逻辑均不变。  
 支持单端口多用户、多协议的 xray 面板，究极缝合怪    
 通过免费的Telegram bot方便快捷地进行监控、管理你的代理服务  
-&#x26A1;`xtls-rprx-vision`与`reality`快速入手请看[这里](https://github.com/torr9522/n3-ui/wiki/%E8%8A%82%E7%82%B9%E9%85%8D%E7%BD%AE)
+&#x26A1;`xtls-rprx-vision`与`reality`快速入手请看[这里](https://github.com/torr9522/n5-ui/wiki/%E8%8A%82%E7%82%B9%E9%85%8D%E7%BD%AE)
 欢迎大家使用并反馈意见或提交Pr,帮助项目更好的改善  
 如果您觉得本项目对您有所帮助,不妨给个star:star2:支持我  
 或者你恰巧有购买服务器的需求,可以通过文末的赞助部分支持我~ 
@@ -33,8 +35,8 @@
 - Telegram bot通知、控制功能
 - 更多高级配置项，详见面板 
 
-:bulb:具体**使用、配置细节以及问题排查**请点击这里:point_right:[WIKI](https://github.com/torr9522/n3-ui/wiki):point_left:
- Specific **Usages、Configurations and Debug** please refer to [WIKI](https://github.com/torr9522/n3-ui/wiki)
+:bulb:具体**使用、配置细节以及问题排查**请点击这里:point_right:[WIKI](https://github.com/torr9522/n5-ui/wiki):point_left:
+ Specific **Usages、Configurations and Debug** please refer to [WIKI](https://github.com/torr9522/n5-ui/wiki)
 # 一键安装
 在安装前请确保你的系统支持`bash`环境,且系统网络正常  
 
@@ -172,6 +174,7 @@ xray 状态: 运行
 - Debian 8+
 
 # 变更记录   
+- 2026.08.08：建立独立项目 `n5-ui`，完成第一阶段品牌迁移；保留 `x-ui` 运行兼容层，不修改服务名、命令名、路径、数据库、API 与 Xray 配置生成逻辑  
 - 2026.04.22：修复安装后面板地址优先显示公网IP；补充 mixed/tunnel 协议与 socks/http/dokodemo 的容错与展示逻辑；修复菜单选项7读取设置失败问题；修复 socks 关闭密码认证后详情仍显示账号密码，并为 http 新增密码认证开关  
 - 2026.04.22：完成 x-ui 第一次源码备份（backup-001），详见 `docs/BACKUP_LOG.md`  
 - 2023.07.18：随机生成Reality dest与serverNames,去除微软域名;细化sniffing配置  
@@ -222,4 +225,4 @@ VPS推送可关注电报[频道](https://t.me/VpsReStockAlert)
 
 ## Stargazers over time
 
-[![Stargazers over time](https://starchart.cc/torr9522/n3-ui.svg)](https://starchart.cc/torr9522/n3-ui)
+[![Stargazers over time](https://starchart.cc/torr9522/n5-ui.svg)](https://starchart.cc/torr9522/n5-ui)

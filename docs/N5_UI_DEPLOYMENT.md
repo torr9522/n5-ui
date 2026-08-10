@@ -1,0 +1,281 @@
+# N5-UI Deployment
+
+更新时间：2026-08-10  
+适用版本：`v0.1.0-beta-simple`
+
+## 1. 部署原则
+
+- N5-UI 是基于 `n3-ui` 的个人使用型二开面板。
+- 运行兼容层继续保持 `x-ui`：
+  - 服务名：`x-ui`
+  - systemd：`x-ui.service`
+  - 安装命令：沿用 `n3-ui`
+  - 默认运行目录：`/usr/local/x-ui`
+  - 默认数据库：`/etc/x-ui/x-ui.db`
+- 发布整理阶段不改：
+  - 安装脚本逻辑
+  - systemd 逻辑
+  - Xray 核心逻辑
+  - x-ui 原兼容层命令名
+
+## 2. 安装方式
+
+### 2.1 一键安装
+
+当前兼容安装命令：
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install.sh)
+```
+
+英文安装：
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install_en.sh)
+```
+
+说明：
+
+- 这是兼容层要求，不因 N5 品牌变更而修改。
+- 安装脚本会把程序部署到 `/usr/local/x-ui`。
+
+### 2.2 本地源码构建
+
+```bash
+cd /root/n5-ui
+go test ./...
+go build -o x-ui .
+```
+
+说明：
+
+- 构建产物名仍然是 `x-ui`，不是 `n5-ui`。
+
+## 3. 运行目录与关键文件
+
+| 路径 | 说明 |
+|---|---|
+| `/usr/local/x-ui/` | 程序主目录 |
+| `/usr/local/x-ui/x-ui` | 主程序二进制 |
+| `/usr/local/x-ui/bin/config.json` | 当前最终 Xray 配置 |
+| `/usr/local/x-ui/bin/xray-linux-amd64` | Xray 主程序 |
+| `/etc/x-ui/x-ui.db` | SQLite 数据库 |
+| `/etc/x-ui/certs/` | 托管证书目录 |
+| `/usr/bin/x-ui` | 运维管理脚本入口 |
+| `/etc/systemd/system/x-ui.service` 或系统加载副本 | systemd 服务 |
+
+## 4. 升级流程
+
+### 4.1 本地升级前检查
+
+```bash
+cd /root/n5-ui
+git status
+go test ./...
+go build -o x-ui.new .
+```
+
+检查项：
+
+- 工作区是否干净
+- 是否存在未审查文档或测试产物
+- `go test ./...` 是否通过
+- `go build` 是否通过
+
+### 4.2 远端升级原则
+
+不要覆盖：
+
+- `/etc/x-ui/x-ui.db`
+- `/usr/local/x-ui/bin/config.json`
+- systemd service 文件
+
+只更新：
+
+- 程序源码
+- 前端页面
+- N5 扩展模块
+- 二进制
+
+### 4.3 推荐升级步骤
+
+```bash
+cd /usr/local/x-ui
+go test ./...
+go build -o x-ui.new .
+mv x-ui.new x-ui
+systemctl restart x-ui
+systemctl is-active x-ui
+```
+
+## 5. 备份
+
+### 5.1 升级前备份
+
+推荐目录：
+
+- `/root/n5-ui-backups/`
+
+推荐内容：
+
+- `/usr/local/x-ui/`
+
+推荐命名：
+
+```bash
+tar -czf /root/n5-ui-backups/x-ui-$(date +%Y%m%d-%H%M%S).tar.gz /usr/local/x-ui
+```
+
+### 5.2 数据与配置保护
+
+即使备份程序目录，也建议单独保护：
+
+- `/etc/x-ui/x-ui.db`
+- `/usr/local/x-ui/bin/config.json`
+
+## 6. 恢复
+
+### 6.1 二进制和前端恢复
+
+```bash
+systemctl stop x-ui
+tar -xzf /root/n5-ui-backups/<backup>.tar.gz -C /
+systemctl start x-ui
+systemctl is-active x-ui
+```
+
+### 6.2 仅回滚程序，不回滚数据
+
+适用于：
+
+- 代码升级异常
+- 数据库不希望回退
+
+做法：
+
+- 只恢复 `/usr/local/x-ui/`
+- 不覆盖 `/etc/x-ui/x-ui.db`
+- 不覆盖当前 `bin/config.json`，除非确认运行配置损坏
+
+## 7. 测试服务器部署流程
+
+当前项目使用过的测试部署基线：
+
+- 目标目录：`/usr/local/x-ui`
+- 备份目录：`/root/n5-ui-backups`
+- 服务名：`x-ui`
+
+### 7.1 部署前
+
+1. 备份当前 `/usr/local/x-ui`
+2. 确认不覆盖数据库与最终配置
+3. 同步最新源码
+
+### 7.2 重点同步内容
+
+- `database/model/n5/`
+- `database/n5_phase2.go`
+- `web/controller/n5/`
+- `web/service/n5/`
+- `web/html/n5/`
+- `web/web.go`
+- `web/html/xui/common_sider.html`
+- `web/html/xui/setting.html`
+- `x-ui.sh`
+- 其他本版本实际修改文件
+
+### 7.3 远端编译与重启
+
+```bash
+cd /usr/local/x-ui
+go test ./...
+go build -o x-ui.new .
+mv x-ui.new x-ui
+systemctl restart x-ui
+systemctl is-active x-ui
+```
+
+### 7.4 页面验证
+
+至少验证：
+
+- `/xui/`
+- `/n5/egress`
+- `/n5/pools`
+- `/n5/traffic-policy`
+- `/n5/simple`
+- `/n5/simple/rules`
+- `/n5/xray-status`
+
+### 7.5 N5 功能验证
+
+- N5 左侧菜单是否存在
+- 出口列表能否加载
+- Simple 出口能否加载
+- Simple 规则能否加载
+- `n5XrayExtensionEnable` 设置项是否存在
+- 旧入站功能是否仍正常
+
+## 8. 发布前检查
+
+### 8.1 本地检查
+
+- `git status`
+- `go test ./...`
+- `go build -o x-ui.new .`
+- 文档是否完整
+- 未提交文件中是否包含敏感信息
+
+### 8.2 远端检查
+
+- `systemctl is-active x-ui` 必须为 `active`
+- 如开启 N5 merge，`/n5/api/xray/status` 应能返回状态
+- `bin/config.json` 需可通过 `xray.TestConfig`
+
+## 9. 敏感信息处理建议
+
+发布前不要把以下内容提交到公开仓库：
+
+- 服务器密码
+- 私有域名证书内容
+- `/etc/x-ui/x-ui.db`
+- 真实运行态 `bin/config.json`
+- 含公网 IP、面板地址、测试结果的临时回归产物
+- 含测试账号密码的临时脚本
+
+## 10. 与当前版本对应的运维入口
+
+### 面板设置
+
+- `web/html/xui/setting.html`
+- 开关：`N5 Xray Extension Enable`
+
+### 脚本证书救援
+
+- 命令：`x-ui`
+- 菜单：
+  - `16` 证书管理
+  - 证书管理子菜单中 `6-8` 为 Phase A HTTPS Rescue
+
+### 服务控制
+
+```bash
+systemctl status x-ui
+systemctl restart x-ui
+systemctl stop x-ui
+systemctl start x-ui
+```
+
+## 11. 当前版本发布建议
+
+建议发布名：
+
+- `v0.1.0-beta-simple`
+
+建议发布说明核心点：
+
+- 完成 N5 品牌迁移
+- 完成高级出口 / 线路池 / 分流 / merge
+- 完成轻量检测
+- 完成 Simple Mode
+- 完成 HTTPS Rescue Phase A

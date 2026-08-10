@@ -337,6 +337,10 @@ func InitDB(dbPath string) error {
 	if err != nil {
 		return err
 	}
+	err = initN5Phase2()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

@@ -274,8 +274,11 @@ func (p *process) Start() (err error) {
 		}
 	}()
 
+	if err := cmd.Start(); err != nil {
+		return err
+	}
 	go func() {
-		err := cmd.Run()
+		err := cmd.Wait()
 		if err != nil {
 			p.exitErr = err
 		}
@@ -283,6 +286,14 @@ func (p *process) Start() (err error) {
 
 	p.refreshVersion()
 	p.refreshAPIPort()
+
+	time.Sleep(300 * time.Millisecond)
+	if !p.IsRunning() {
+		if p.exitErr != nil {
+			return p.exitErr
+		}
+		return errors.New("xray exited unexpectedly during startup")
+	}
 
 	return nil
 }

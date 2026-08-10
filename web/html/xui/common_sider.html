@@ -15,6 +15,44 @@
     <a-icon type="setting"></a-icon>
     <span>面板设置</span>
 </a-menu-item>
+<a-sub-menu>
+    <template slot="title">
+        <a-icon type="deployment-unit"></a-icon>
+        <span>N5增强</span>
+    </template>
+    <a-menu-item key="{{ .base_path }}n5/simple">
+        <a-icon type="thunderbolt"></a-icon>
+        <span>N5出口</span>
+    </a-menu-item>
+    <a-menu-item key="{{ .base_path }}n5/simple/rules">
+        <a-icon type="fork"></a-icon>
+        <span>出口规则</span>
+    </a-menu-item>
+    <a-menu-item key="{{ .base_path }}n5/egress">
+        <a-icon type="share-alt"></a-icon>
+        <span>高级设置</span>
+    </a-menu-item>
+    <a-menu-item key="{{ .base_path }}n5/pools">
+        <a-icon type="cluster"></a-icon>
+        <span>出口线路池</span>
+    </a-menu-item>
+    <a-menu-item key="{{ .base_path }}n5/traffic-policy">
+        <a-icon type="branches"></a-icon>
+        <span>流量分流</span>
+    </a-menu-item>
+    <a-menu-item key="{{ .base_path }}n5/xray-status">
+        <a-icon type="dashboard"></a-icon>
+        <span>N5运行状态</span>
+    </a-menu-item>
+    <a-menu-item key="{{ .base_path }}n5/config-history">
+        <a-icon type="file-search"></a-icon>
+        <span>配置历史</span>
+    </a-menu-item>
+    <a-menu-item key="{{ .base_path }}n5/egress-test">
+        <a-icon type="experiment"></a-icon>
+        <span>出口测试入口</span>
+    </a-menu-item>
+</a-sub-menu>
 <!--<a-menu-item key="{{ .base_path }}xui/clients">-->
 <!--    <a-icon type="laptop"></a-icon>-->
 <!--    <span>客户端</span>-->
@@ -24,7 +62,7 @@
         <a-icon type="link"></a-icon>
         <span>其他</span>
     </template>
-    <a-menu-item key="https://github.com/vaxilu/x-ui/">
+    <a-menu-item key="https://github.com/torr9522/n5-ui/">
         <a-icon type="github"></a-icon>
         <span>Github</span>
     </a-menu-item>
