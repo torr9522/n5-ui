@@ -9,6 +9,7 @@ import (
 	n5model "x-ui/database/model/n5"
 	"x-ui/logger"
 	"x-ui/web/entity"
+	coreservice "x-ui/web/service"
 	n5service "x-ui/web/service/n5"
 	"x-ui/web/session"
 )
@@ -17,10 +18,17 @@ type EgressController struct {
 	egressService     n5service.EgressService
 	detailService     n5service.EgressDetailService
 	egressTestService n5service.EgressTestService
+	xrayService       n5RestartTrigger
+}
+
+type n5RestartTrigger interface {
+	SetToNeedRestart()
 }
 
 func NewEgressController(g *gin.RouterGroup) *EgressController {
-	a := &EgressController{}
+	a := &EgressController{
+		xrayService: &coreservice.XrayService{},
+	}
 	a.initRouter(g)
 	return a
 }
@@ -99,6 +107,7 @@ func (a *EgressController) add(c *gin.Context) {
 		jsonMsg(c, "add egress", err)
 		return
 	}
+	a.getXrayService().SetToNeedRestart()
 	jsonObj(c, created, nil)
 }
 
@@ -118,6 +127,7 @@ func (a *EgressController) update(c *gin.Context) {
 		jsonMsg(c, "update egress", err)
 		return
 	}
+	a.getXrayService().SetToNeedRestart()
 	jsonObj(c, updated, nil)
 }
 
@@ -128,6 +138,9 @@ func (a *EgressController) del(c *gin.Context) {
 		return
 	}
 	err = a.egressService.Delete(id)
+	if err == nil {
+		a.getXrayService().SetToNeedRestart()
+	}
 	jsonMsg(c, "delete egress", err)
 }
 
@@ -227,4 +240,11 @@ func html(c *gin.Context, name string, title string, data gin.H) {
 	if len(c.Errors) > 0 {
 		logger.Warning("render html failed: ", name, " errors: ", c.Errors.String())
 	}
+}
+
+func (a *EgressController) getXrayService() n5RestartTrigger {
+	if a.xrayService != nil {
+		return a.xrayService
+	}
+	return &coreservice.XrayService{}
 }

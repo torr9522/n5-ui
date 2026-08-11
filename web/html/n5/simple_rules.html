@@ -6,6 +6,32 @@
     {{ template "commonSider" . }}
     <a-layout id="content-layout">
         <a-layout-content style="margin: 24px 16px;">
+            <a-card title="N5 分流状态" style="margin-bottom: 16px;">
+                <a-row type="flex" justify="space-between" align="middle">
+                    <a-col>
+                        <a-tag :color="n5Enabled ? 'green' : 'default'">
+                            [[ n5Enabled ? 'enabled' : 'disabled' ]]
+                        </a-tag>
+                        <span style="color: rgba(0, 0, 0, 0.45);">
+                            当前状态与高级设置中的 N5 Xray Extension Enable 保持一致。修改后将进入自动应用队列。
+                        </span>
+                    </a-col>
+                    <a-col>
+                        <a-button type="primary"
+                                  :loading="n5StatusLoading"
+                                  :disabled="n5Enabled"
+                                  @click="updateN5Status(true)">
+                            开启
+                        </a-button>
+                        <a-button style="margin-left: 8px"
+                                  :loading="n5StatusLoading"
+                                  :disabled="!n5Enabled"
+                                  @click="updateN5Status(false)">
+                            关闭
+                        </a-button>
+                    </a-col>
+                </a-row>
+            </a-card>
             <a-card title="添加出口规则">
                 <a-form layout="vertical">
                     <a-row :gutter="12">
@@ -103,8 +129,19 @@
             egresses: [],
             trafficTypes: [],
             form: defaultRuleForm(),
+            n5Enabled: false,
+            n5StatusLoading: false,
         },
         methods: {
+            async loadN5Status() {
+                this.n5StatusLoading = true;
+                const msg = await HttpUtil.get('/n5/api/simple/rule/n5-status');
+                this.n5StatusLoading = false;
+                if (!msg.success || !msg.obj) {
+                    return;
+                }
+                this.n5Enabled = !!msg.obj.enabled;
+            },
             async loadRules() {
                 const msg = await HttpUtil.get('/n5/api/simple/rule/list');
                 if (!msg.success || !msg.obj) {
@@ -137,6 +174,7 @@
                 }
                 const msg = await HttpUtil.post('/n5/api/simple/rule/add', payload);
                 if (msg.success) {
+                    this.$message.success('规则已保存，等待自动应用');
                     await this.loadRules();
                     this.resetForm();
                 }
@@ -144,14 +182,26 @@
             async deleteRule(row) {
                 const msg = await HttpUtil.post('/n5/api/simple/rule/delete', { id: row.id });
                 if (msg.success) {
+                    this.$message.success('规则已删除，等待自动应用');
                     await this.loadRules();
                 }
+            },
+            async updateN5Status(enabled) {
+                this.n5StatusLoading = true;
+                const msg = await HttpUtil.post('/n5/api/simple/rule/n5-status', { enabled });
+                this.n5StatusLoading = false;
+                if (!msg.success) {
+                    return;
+                }
+                this.n5Enabled = !!(msg.obj && msg.obj.enabled);
+                this.$message.success('N5 分流状态已更新，等待自动应用');
             },
             openSimpleEgress() {
                 location.href = `${basePath}n5/simple`;
             },
         },
         async mounted() {
+            await this.loadN5Status();
             await this.loadRules();
             this.resetForm();
         },

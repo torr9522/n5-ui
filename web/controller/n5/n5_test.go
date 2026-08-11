@@ -13,6 +13,7 @@ import (
 	"x-ui/database"
 	"x-ui/database/model"
 	n5model "x-ui/database/model/n5"
+	coreservice "x-ui/web/service"
 	n5service "x-ui/web/service/n5"
 
 	"github.com/gin-contrib/sessions"
@@ -76,6 +77,20 @@ func initControllerTestDB(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "controller.db")
 	if err := database.InitDB(dbPath); err != nil {
 		t.Fatalf("init db failed: %v", err)
+	}
+}
+
+func clearRestartFlag() {
+	xraySvc := &coreservice.XrayService{}
+	for xraySvc.IsNeedRestartAndSetFalse() {
+	}
+}
+
+func expectRestartFlag(t *testing.T, step string) {
+	t.Helper()
+	xraySvc := &coreservice.XrayService{}
+	if !xraySvc.IsNeedRestartAndSetFalse() {
+		t.Fatalf("%s did not set restart flag", step)
 	}
 }
 
@@ -564,4 +579,113 @@ func TestTrafficPolicyManagementAPIResponses(t *testing.T) {
 	if policyCount != 0 {
 		t.Fatalf("expected policy deleted, count=%d", policyCount)
 	}
+}
+
+func TestN5ConfigMutationSetsRestartFlag(t *testing.T) {
+	initControllerTestDB(t)
+	engine := newTestEngine(t)
+	clearRestartFlag()
+
+	egressAddBody := bytes.NewBufferString(`{"name":"restart-egress","protocol":"socks","enabled":true,"outboundJson":"{\"protocol\":\"socks\",\"settings\":{\"servers\":[{\"address\":\"example.com\",\"port\":1080}]}}"} `)
+	egressAddReq, _ := http.NewRequest(http.MethodPost, "/n5/api/egress/add", egressAddBody)
+	egressAddReq.Header.Set("Content-Type", "application/json")
+	egressAddResp := httptest.NewRecorder()
+	engine.ServeHTTP(egressAddResp, egressAddReq)
+	if egressAddResp.Code != http.StatusOK {
+		t.Fatalf("unexpected egress add status: %d", egressAddResp.Code)
+	}
+	expectRestartFlag(t, "egress add")
+
+	poolSvc := &n5service.EgressPoolService{}
+	pool, err := poolSvc.Create(&n5model.EgressPool{Name: "restart-pool", Strategy: "random", Enabled: true})
+	if err != nil {
+		t.Fatalf("create pool failed: %v", err)
+	}
+	memberAddBody := bytes.NewBufferString(`{"poolId":` + strconv.Itoa(pool.Id) + `,"egressId":1,"weight":1,"sortOrder":1}`)
+	memberAddReq, _ := http.NewRequest(http.MethodPost, "/n5/api/pool/member/add", memberAddBody)
+	memberAddReq.Header.Set("Content-Type", "application/json")
+	memberAddResp := httptest.NewRecorder()
+	engine.ServeHTTP(memberAddResp, memberAddReq)
+	if memberAddResp.Code != http.StatusOK {
+		t.Fatalf("unexpected pool member add status: %d", memberAddResp.Code)
+	}
+	expectRestartFlag(t, "pool member add")
+
+	inbound := &model.Inbound{
+		UserId:         1,
+		Remark:         "restart-inbound",
+		Enable:         true,
+		Listen:         "0.0.0.0",
+		Port:           32101,
+		Protocol:       model.Socks,
+		Settings:       `{"auth":"noauth","udp":false,"ip":"127.0.0.1"}`,
+		StreamSettings: `{}`,
+		Tag:            "restart-inbound-tag",
+		Sniffing:       `{}`,
+	}
+	if err := database.GetDB().Create(inbound).Error; err != nil {
+		t.Fatalf("create inbound failed: %v", err)
+	}
+
+	policyAddBody := bytes.NewBufferString(`{"name":"restart-policy","enabled":true,"defaultTargetType":"egress","defaultTargetId":1}`)
+	policyAddReq, _ := http.NewRequest(http.MethodPost, "/n5/api/traffic-policy/add", policyAddBody)
+	policyAddReq.Header.Set("Content-Type", "application/json")
+	policyAddResp := httptest.NewRecorder()
+	engine.ServeHTTP(policyAddResp, policyAddReq)
+	if policyAddResp.Code != http.StatusOK {
+		t.Fatalf("unexpected traffic policy add status: %d", policyAddResp.Code)
+	}
+	expectRestartFlag(t, "traffic policy add")
+
+	policySvc := &n5service.TrafficPolicyService{}
+	policies, err := policySvc.List()
+	if err != nil || len(policies) == 0 {
+		t.Fatalf("list policies failed: %v", err)
+	}
+	policyID := policies[len(policies)-1].Id
+
+	ruleAddBody := bytes.NewBufferString(`{"policyId":` + strconv.Itoa(policyID) + `,"ruleType":"domain","matchMode":"exact","matchValue":"api64.ipify.org","targetType":"egress","targetId":1,"enabled":true}`)
+	ruleAddReq, _ := http.NewRequest(http.MethodPost, "/n5/api/traffic-policy/rule/add", ruleAddBody)
+	ruleAddReq.Header.Set("Content-Type", "application/json")
+	ruleAddResp := httptest.NewRecorder()
+	engine.ServeHTTP(ruleAddResp, ruleAddReq)
+	if ruleAddResp.Code != http.StatusOK {
+		t.Fatalf("unexpected traffic rule add status: %d", ruleAddResp.Code)
+	}
+	expectRestartFlag(t, "traffic rule add")
+
+	bindBody := bytes.NewBufferString(`{"inboundId":` + strconv.Itoa(inbound.Id) + `,"policyId":` + strconv.Itoa(policyID) + `}`)
+	bindReq, _ := http.NewRequest(http.MethodPost, "/n5/api/traffic-policy/bind", bindBody)
+	bindReq.Header.Set("Content-Type", "application/json")
+	bindResp := httptest.NewRecorder()
+	engine.ServeHTTP(bindResp, bindReq)
+	if bindResp.Code != http.StatusOK {
+		t.Fatalf("unexpected traffic bind status: %d", bindResp.Code)
+	}
+	expectRestartFlag(t, "traffic bind")
+
+	templateInbound := &model.Inbound{
+		UserId:         1,
+		Remark:         "template-restart-inbound",
+		Enable:         true,
+		Listen:         "0.0.0.0",
+		Port:           32111,
+		Protocol:       model.Socks,
+		Settings:       `{"auth":"noauth","udp":false,"ip":"127.0.0.1"}`,
+		StreamSettings: `{}`,
+		Tag:            "template-restart-inbound-tag",
+		Sniffing:       `{}`,
+	}
+	if err := database.GetDB().Create(templateInbound).Error; err != nil {
+		t.Fatalf("create template inbound failed: %v", err)
+	}
+	templateCreateBody := bytes.NewBufferString(`{"templateName":"ai","policyName":"AI Restart Policy","inboundId":` + strconv.Itoa(templateInbound.Id) + `,"targetType":"egress","targetId":1}`)
+	templateCreateReq, _ := http.NewRequest(http.MethodPost, "/n5/api/traffic-template/create", templateCreateBody)
+	templateCreateReq.Header.Set("Content-Type", "application/json")
+	templateCreateResp := httptest.NewRecorder()
+	engine.ServeHTTP(templateCreateResp, templateCreateReq)
+	if templateCreateResp.Code != http.StatusOK {
+		t.Fatalf("unexpected template create status: %d", templateCreateResp.Code)
+	}
+	expectRestartFlag(t, "traffic template create")
 }

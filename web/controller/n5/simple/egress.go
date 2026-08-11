@@ -8,6 +8,7 @@ import (
 	"x-ui/config"
 	"x-ui/util/common"
 	"x-ui/web/entity"
+	coreservice "x-ui/web/service"
 	simpleservice "x-ui/web/service/n5/simple"
 	"x-ui/web/session"
 
@@ -24,15 +25,21 @@ type egressAPI interface {
 }
 
 type EgressController struct {
-	service egressAPI
+	service     egressAPI
+	xrayService simpleEgressRestartTrigger
 }
 
 func NewEgressController(g *gin.RouterGroup) *EgressController {
 	a := &EgressController{
-		service: simpleservice.NewEgressService(),
+		service:     simpleservice.NewEgressService(),
+		xrayService: &coreservice.XrayService{},
 	}
 	a.initRouter(g)
 	return a
+}
+
+type simpleEgressRestartTrigger interface {
+	SetToNeedRestart()
 }
 
 func (a *EgressController) initRouter(g *gin.RouterGroup) {
@@ -96,6 +103,7 @@ func (a *EgressController) add(c *gin.Context) {
 		jsonMsg(c, "add simple egress", err)
 		return
 	}
+	a.getXrayService().SetToNeedRestart()
 	jsonObj(c, created, nil)
 }
 
@@ -118,6 +126,7 @@ func (a *EgressController) update(c *gin.Context) {
 		jsonMsg(c, "update simple egress", err)
 		return
 	}
+	a.getXrayService().SetToNeedRestart()
 	jsonObj(c, updated, nil)
 }
 
@@ -145,7 +154,18 @@ func (a *EgressController) del(c *gin.Context) {
 		jsonMsg(c, "delete simple egress", err)
 		return
 	}
-	jsonMsg(c, "delete simple egress", a.service.DeleteSimpleEgress(payload.Id))
+	err := a.service.DeleteSimpleEgress(payload.Id)
+	if err == nil {
+		a.getXrayService().SetToNeedRestart()
+	}
+	jsonMsg(c, "delete simple egress", err)
+}
+
+func (a *EgressController) getXrayService() simpleEgressRestartTrigger {
+	if a.xrayService != nil {
+		return a.xrayService
+	}
+	return &coreservice.XrayService{}
 }
 
 func checkLogin(c *gin.Context) {

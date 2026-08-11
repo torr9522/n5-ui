@@ -2,17 +2,25 @@ package n5
 
 import (
 	"strconv"
+	coreservice "x-ui/web/service"
 	n5service "x-ui/web/service/n5"
 
 	"github.com/gin-gonic/gin"
 )
 
 type TrafficTemplateController struct {
-	service n5service.TrafficTemplateService
+	service     n5service.TrafficTemplateService
+	xrayService templateRestartTrigger
+}
+
+type templateRestartTrigger interface {
+	SetToNeedRestart()
 }
 
 func NewTrafficTemplateController(g *gin.RouterGroup) *TrafficTemplateController {
-	a := &TrafficTemplateController{}
+	a := &TrafficTemplateController{
+		xrayService: &coreservice.XrayService{},
+	}
 	a.initRouter(g)
 	return a
 }
@@ -55,6 +63,7 @@ func (a *TrafficTemplateController) create(c *gin.Context) {
 		jsonMsg(c, "create traffic template", err)
 		return
 	}
+	a.getXrayService().SetToNeedRestart()
 	jsonObj(c, record, nil)
 }
 
@@ -64,4 +73,11 @@ func parsePositiveInt(value string) int {
 		return 0
 	}
 	return n
+}
+
+func (a *TrafficTemplateController) getXrayService() templateRestartTrigger {
+	if a.xrayService != nil {
+		return a.xrayService
+	}
+	return &coreservice.XrayService{}
 }

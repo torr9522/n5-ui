@@ -4,15 +4,23 @@ import (
 	"github.com/gin-gonic/gin"
 	"strconv"
 	n5model "x-ui/database/model/n5"
+	coreservice "x-ui/web/service"
 	n5service "x-ui/web/service/n5"
 )
 
 type PoolController struct {
 	poolService n5service.EgressPoolService
+	xrayService poolRestartTrigger
+}
+
+type poolRestartTrigger interface {
+	SetToNeedRestart()
 }
 
 func NewPoolController(g *gin.RouterGroup) *PoolController {
-	a := &PoolController{}
+	a := &PoolController{
+		xrayService: &coreservice.XrayService{},
+	}
 	a.initRouter(g)
 	return a
 }
@@ -103,6 +111,7 @@ func (a *PoolController) addMember(c *gin.Context) {
 		jsonMsg(c, "add pool member", err)
 		return
 	}
+	a.getXrayService().SetToNeedRestart()
 	jsonObj(c, record, nil)
 }
 
@@ -116,5 +125,15 @@ func (a *PoolController) delMember(c *gin.Context) {
 		return
 	}
 	err := a.poolService.RemoveMember(payload.PoolId, payload.EgressId)
+	if err == nil {
+		a.getXrayService().SetToNeedRestart()
+	}
 	jsonMsg(c, "delete pool member", err)
+}
+
+func (a *PoolController) getXrayService() poolRestartTrigger {
+	if a.xrayService != nil {
+		return a.xrayService
+	}
+	return &coreservice.XrayService{}
 }

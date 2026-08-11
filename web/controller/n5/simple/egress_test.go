@@ -76,7 +76,15 @@ func (f *fakeService) TestSimpleEgress(id int) (*simpleservice.SimpleEgressTestR
 	}, nil
 }
 
-func newTestEngine(t *testing.T, svc egressAPI) *gin.Engine {
+type fakeEgressRestart struct {
+	calls int
+}
+
+func (f *fakeEgressRestart) SetToNeedRestart() {
+	f.calls++
+}
+
+func newTestEngine(t *testing.T, svc egressAPI, restart simpleEgressRestartTrigger) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
@@ -96,13 +104,13 @@ func newTestEngine(t *testing.T, svc egressAPI) *gin.Engine {
 	})
 	engine.LoadHTMLFiles(testFiles()...)
 	g := engine.Group("/")
-	controller := &EgressController{service: svc}
+	controller := &EgressController{service: svc, xrayService: restart}
 	controller.initRouter(g)
 	return engine
 }
 
 func TestSimplePageRouteRender(t *testing.T) {
-	engine := newTestEngine(t, &fakeService{})
+	engine := newTestEngine(t, &fakeService{}, &fakeEgressRestart{})
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/n5/simple", nil)
@@ -131,7 +139,8 @@ func TestSimpleEgressAPIResponses(t *testing.T) {
 			},
 		},
 	}
-	engine := newTestEngine(t, svc)
+	restart := &fakeEgressRestart{}
+	engine := newTestEngine(t, svc, restart)
 
 	listResp := httptest.NewRecorder()
 	listReq, _ := http.NewRequest(http.MethodGet, "/n5/api/simple/egress/list", nil)
@@ -164,6 +173,9 @@ func TestSimpleEgressAPIResponses(t *testing.T) {
 	if !bytes.Contains(addResp.Body.Bytes(), []byte(`"name":"simple-added"`)) {
 		t.Fatalf("unexpected add body: %s", addResp.Body.String())
 	}
+	if restart.calls != 1 {
+		t.Fatalf("unexpected restart count after add: %d", restart.calls)
+	}
 
 	updateBody := bytes.NewBufferString(`{"name":"simple-updated","protocol":"ss","address":"ss.example.org","port":8388,"method":"aes-256-gcm","password":"demo","enabled":true}`)
 	updateReq, _ := http.NewRequest(http.MethodPost, "/n5/api/simple/egress/update/5", updateBody)
@@ -175,6 +187,9 @@ func TestSimpleEgressAPIResponses(t *testing.T) {
 	}
 	if !bytes.Contains(updateResp.Body.Bytes(), []byte(`"name":"simple-updated"`)) {
 		t.Fatalf("unexpected update body: %s", updateResp.Body.String())
+	}
+	if restart.calls != 2 {
+		t.Fatalf("unexpected restart count after update: %d", restart.calls)
 	}
 
 	testBody := bytes.NewBufferString(`{"id":1}`)
@@ -199,5 +214,8 @@ func TestSimpleEgressAPIResponses(t *testing.T) {
 	}
 	if svc.deletedID != 9 {
 		t.Fatalf("unexpected deleted id: %d", svc.deletedID)
+	}
+	if restart.calls != 3 {
+		t.Fatalf("unexpected restart count after delete: %d", restart.calls)
 	}
 }

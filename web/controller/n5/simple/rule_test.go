@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 	"x-ui/database/model"
+	"x-ui/web/entity"
 	simpleservice "x-ui/web/service/n5/simple"
 
 	"github.com/gin-contrib/sessions"
@@ -42,7 +43,41 @@ func (f *fakeRuleService) DeleteSimpleRule(policyId int) error {
 	return nil
 }
 
-func newRuleTestEngine(t *testing.T, svc ruleAPI) *gin.Engine {
+type fakeRuleRestart struct {
+	calls int
+}
+
+func (f *fakeRuleRestart) SetToNeedRestart() {
+	f.calls++
+}
+
+type fakeRuleSettingService struct {
+	enabled bool
+}
+
+func (f *fakeRuleSettingService) GetAllSetting() (*entity.AllSetting, error) {
+	return &entity.AllSetting{
+		WebListen:               "",
+		WebPort:                 54321,
+		WebCertFile:             "",
+		WebKeyFile:              "",
+		WebBasePath:             "/",
+		XrayTemplateConfig:      `{"log":{},"inbounds":[],"outbounds":[]}`,
+		N5XrayExtensionEnable:   f.enabled,
+		TimeLocation:            "Asia/Shanghai",
+	}, nil
+}
+
+func (f *fakeRuleSettingService) GetN5XrayExtensionEnable() (bool, error) {
+	return f.enabled, nil
+}
+
+func (f *fakeRuleSettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {
+	f.enabled = allSetting.N5XrayExtensionEnable
+	return nil
+}
+
+func newRuleTestEngine(t *testing.T, svc ruleAPI, restart ruleRestartTrigger, setting ruleSettingAPI) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
@@ -62,13 +97,13 @@ func newRuleTestEngine(t *testing.T, svc ruleAPI) *gin.Engine {
 	})
 	engine.LoadHTMLFiles(testFiles()...)
 	g := engine.Group("/")
-	controller := &RuleController{service: svc}
+	controller := &RuleController{service: svc, xrayService: restart, settingService: setting}
 	controller.initRouter(g)
 	return engine
 }
 
 func TestSimpleRulePageRouteRender(t *testing.T) {
-	engine := newRuleTestEngine(t, &fakeRuleService{})
+	engine := newRuleTestEngine(t, &fakeRuleService{}, &fakeRuleRestart{}, &fakeRuleSettingService{})
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/n5/simple/rules", nil)
@@ -105,7 +140,9 @@ func TestSimpleRuleAPIResponses(t *testing.T) {
 			},
 		},
 	}
-	engine := newRuleTestEngine(t, svc)
+	restart := &fakeRuleRestart{}
+	setting := &fakeRuleSettingService{}
+	engine := newRuleTestEngine(t, svc, restart, setting)
 
 	listResp := httptest.NewRecorder()
 	listReq, _ := http.NewRequest(http.MethodGet, "/n5/api/simple/rule/list", nil)
@@ -115,6 +152,16 @@ func TestSimpleRuleAPIResponses(t *testing.T) {
 	}
 	if !bytes.Contains(listResp.Body.Bytes(), []byte(`"trafficType":"ai"`)) {
 		t.Fatalf("unexpected list body: %s", listResp.Body.String())
+	}
+
+	statusResp := httptest.NewRecorder()
+	statusReq, _ := http.NewRequest(http.MethodGet, "/n5/api/simple/rule/n5-status", nil)
+	engine.ServeHTTP(statusResp, statusReq)
+	if statusResp.Code != http.StatusOK {
+		t.Fatalf("unexpected n5 status code: %d", statusResp.Code)
+	}
+	if !bytes.Contains(statusResp.Body.Bytes(), []byte(`"enabled":false`)) {
+		t.Fatalf("unexpected n5 status body: %s", statusResp.Body.String())
 	}
 
 	addBody := bytes.NewBufferString(`{"inboundId":7,"trafficType":"ai","egressId":9}`)
@@ -128,6 +175,24 @@ func TestSimpleRuleAPIResponses(t *testing.T) {
 	if !bytes.Contains(addResp.Body.Bytes(), []byte(`"policyId":21`)) {
 		t.Fatalf("unexpected add body: %s", addResp.Body.String())
 	}
+	if restart.calls != 1 {
+		t.Fatalf("unexpected restart count after add: %d", restart.calls)
+	}
+
+	updateStatusBody := bytes.NewBufferString(`{"enabled":true}`)
+	updateStatusReq, _ := http.NewRequest(http.MethodPost, "/n5/api/simple/rule/n5-status", updateStatusBody)
+	updateStatusReq.Header.Set("Content-Type", "application/json")
+	updateStatusResp := httptest.NewRecorder()
+	engine.ServeHTTP(updateStatusResp, updateStatusReq)
+	if updateStatusResp.Code != http.StatusOK {
+		t.Fatalf("unexpected update n5 status code: %d", updateStatusResp.Code)
+	}
+	if !bytes.Contains(updateStatusResp.Body.Bytes(), []byte(`"enabled":true`)) {
+		t.Fatalf("unexpected update n5 status body: %s", updateStatusResp.Body.String())
+	}
+	if restart.calls != 2 {
+		t.Fatalf("unexpected restart count after status update: %d", restart.calls)
+	}
 
 	delBody := bytes.NewBufferString(`{"id":21}`)
 	delReq, _ := http.NewRequest(http.MethodPost, "/n5/api/simple/rule/delete", delBody)
@@ -139,5 +204,8 @@ func TestSimpleRuleAPIResponses(t *testing.T) {
 	}
 	if svc.deletedID != 21 {
 		t.Fatalf("unexpected deleted id: %d", svc.deletedID)
+	}
+	if restart.calls != 3 {
+		t.Fatalf("unexpected restart count after delete: %d", restart.calls)
 	}
 }
