@@ -1,7 +1,7 @@
 # N5-UI
 
 [简体中文](./README.md)| ENGLISH  
-N5-UI is an independent fork based on n3-ui. Phase 1 only covers project identity migration and brand renaming.  
+N5-UI is an independent fork based on n3-ui, and its install/release source is now fully served from `torr9522/n5-ui`.  
 Runtime compatibility with the `x-ui` ecosystem is intentionally preserved: service name, command name, paths, database, API, and Xray invocation logic remain unchanged.  
 N5-UI is a webUI panel based on Xray-core which supports multi protocols and multi users  
 This project is a fork of [vaxilu&#39;s project](https://github.com/vaxilu/x-ui),and it is a experiental project which used by myself for learning golang   
@@ -53,14 +53,14 @@ If you need more language options ,please open a issue and let me know that
 for more detailed usages,plz see [WIKI](https://github.com/torr9522/n5-ui/wiki)
 
 # Installation
-Make sure your system `bash` and `curl` and `network` are ready,here we go
+Make sure your system `bash`, `curl`, and network are ready. Source installs will auto-install the Go toolchain when needed. The current embedded version is `Go 1.22.7`, with a minimum requirement of `Go 1.16+`.
 
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install.sh)
 ```  
 For English Users,please use the following command to install English supported version:  
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install_en.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install_en.sh)
 ``` 
 
 ## Shortcut  

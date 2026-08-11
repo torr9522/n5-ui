@@ -4,7 +4,7 @@
 > 声明：该项目仅供个人学习、交流，请遵守当地法律法规,勿用于非法用途;请勿用于生产环境  
 > 声明：该项目已闭源，介意者请勿使用；如您需要开源代码，请附上您的Github Profile邮箱联系  
 
-N5-UI 是基于 n3-ui 建立的独立二开项目，第一阶段仅完成项目身份迁移与品牌重命名。  
+N5-UI 是基于 n3-ui 建立的独立二开项目，当前安装与发布源已独立切换到 `torr9522/n5-ui`。  
 运行时继续保持对 `x-ui` 生态的兼容：服务名、命令名、路径、数据库、API 与 Xray 调用逻辑均不变。  
 支持单端口多用户、多协议的 xray 面板，究极缝合怪    
 通过免费的Telegram bot方便快捷地进行监控、管理你的代理服务  
@@ -38,20 +38,20 @@ N5-UI 是基于 n3-ui 建立的独立二开项目，第一阶段仅完成项目�
 :bulb:具体**使用、配置细节以及问题排查**请点击这里:point_right:[WIKI](https://github.com/torr9522/n5-ui/wiki):point_left:
  Specific **Usages、Configurations and Debug** please refer to [WIKI](https://github.com/torr9522/n5-ui/wiki)
 # 一键安装
-在安装前请确保你的系统支持`bash`环境,且系统网络正常  
+在安装前请确保你的系统支持`bash`环境,且系统网络正常。源码安装模式会自动补齐 Go 工具链，当前脚本内置版本为 `Go 1.22.7`，最低要求为 `Go 1.16+`。  
 
 &#x26A1;从原版升级也可使用该命令，数据不会丢失&#x26A1;
 
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install.sh)
 ```    
 For English Users,please use the following command to install English supported version:  
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install_en.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install_en.sh)
 ```
-如需安装指定的版本,可以在上述命令中指定版本号,如指定版本为`0.3.4.4`,安装命令如下：    
-```
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install.sh) 0.3.4.4
+如需安装指定的版本,可以在上述命令中指定版本号,如指定版本为`v0.1.0-beta-simple`,安装命令如下：    
+```  
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install.sh) v0.1.0-beta-simple
 ```
 
 # 效果预览  

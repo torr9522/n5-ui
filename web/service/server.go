@@ -173,9 +173,9 @@ func (s *ServerService) GetXrayVersions() ([]string, error) {
 func (s *ServerService) downloadXRay(version string) (string, error) {
 	_ = version
 	arch := runtime.GOARCH
-	zipName := "xray-linux-amd64.zip"
+	zipName := "Xray-linux-64.zip"
 	if arch == "arm64" {
-		zipName = "xray-linux-arm64.zip"
+		zipName = "Xray-linux-arm64-v8a.zip"
 	}
 
 	localCandidates := []string{
@@ -199,12 +199,16 @@ func (s *ServerService) downloadXRay(version string) (string, error) {
 
 	baseURL := strings.TrimRight(os.Getenv("XUI_RELEASES_BASE"), "/")
 	if baseURL == "" {
-		baseURL = "https://github.com/torr9522/n3-ui/releases/download/n3-ui-assets"
+		baseURL = "https://github.com/torr9522/n5-ui/releases/download/v0.1.0-beta-simple"
 	}
 	url := fmt.Sprintf("%s/%s", baseURL, zipName)
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
+	}
+	if resp.StatusCode >= 400 {
+		resp.Body.Close()
+		return "", fmt.Errorf("download xray runtime failed: %s returned status %d", url, resp.StatusCode)
 	}
 	defer resp.Body.Close()
 

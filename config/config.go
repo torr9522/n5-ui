@@ -23,7 +23,11 @@ const (
 )
 
 func GetVersion() string {
-	return strings.TrimSpace(version)
+	return getVersionValue("version")
+}
+
+func GetXrayRuntimeVersion() string {
+	return getVersionValue("xray")
 }
 
 func GetName() string {
@@ -47,4 +51,28 @@ func IsDebug() bool {
 
 func GetDBPath() string {
 	return fmt.Sprintf("/etc/%s/%s.db", GetName(), GetName())
+}
+
+func getVersionValue(key string) string {
+	content := strings.TrimSpace(version)
+	if content == "" {
+		return ""
+	}
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.Contains(line, "=") {
+			if key == "version" {
+				return line
+			}
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if strings.TrimSpace(parts[0]) == key {
+			return strings.TrimSpace(parts[1])
+		}
+	}
+	return ""
 }

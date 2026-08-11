@@ -5,11 +5,11 @@
 
 ## 1. 部署原则
 
-- N5-UI 是基于 `n3-ui` 的个人使用型二开面板。
+- N5-UI 是基于 `n3-ui` 的个人使用型二开面板，但安装源、发布源、更新源已独立切换到 `torr9522/n5-ui`。
 - 运行兼容层继续保持 `x-ui`：
   - 服务名：`x-ui`
   - systemd：`x-ui.service`
-  - 安装命令：沿用 `n3-ui`
+  - 安装命令：沿用 `x-ui` 兼容入口，但默认源为 `n5-ui`
   - 默认运行目录：`/usr/local/x-ui`
   - 默认数据库：`/etc/x-ui/x-ui.db`
 - 发布整理阶段不改：
@@ -22,24 +22,30 @@
 
 ### 2.1 一键安装
 
-当前兼容安装命令：
+当前默认安装命令：
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install.sh)
 ```
 
 英文安装：
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n3-ui/main/install_en.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install_en.sh)
 ```
 
 说明：
 
-- 这是兼容层要求，不因 N5 品牌变更而修改。
+- `x-ui` 仍然是运行时命令名，但安装脚本默认拉取 `torr9522/n5-ui`。
 - 安装脚本会把程序部署到 `/usr/local/x-ui`。
 
-### 2.2 本地源码构建
+### 2.2 Go 版本要求
+
+- 源码安装最低要求：`Go 1.16+`
+- 当前安装脚本内置自动安装版本：`Go 1.22.7`
+- 如果系统已存在更高版本 Go，安装脚本会直接复用
+
+### 2.3 本地源码构建
 
 ```bash
 cd /root/n5-ui

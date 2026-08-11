@@ -7,11 +7,13 @@ plain='\033[0m'
 
 cur_dir=$(pwd)
 INSTALL_SCRIPT_DIR=""
-XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n3-ui/main}"
-XUI_REPO_URL="${XUI_REPO_URL:-https://github.com/torr9522/n3-ui.git}"
+XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n5-ui/main}"
+XUI_REPO_URL="${XUI_REPO_URL:-https://github.com/torr9522/n5-ui.git}"
 XUI_REPO_BRANCH="${XUI_REPO_BRANCH:-main}"
 INSTALL_MODE="${INSTALL_MODE:-source}"
-XUI_RELEASES_BASE="${XUI_RELEASES_BASE:-${XUI_RELEASES_RAW_BASE:-https://github.com/torr9522/n3-ui/releases/download/n3-ui-assets}}"
+XUI_RELEASE_TAG="${XUI_RELEASE_TAG:-v0.1.0-beta-simple}"
+XUI_RELEASES_BASE="${XUI_RELEASES_BASE:-${XUI_RELEASES_RAW_BASE:-https://github.com/torr9522/n5-ui/releases/download/${XUI_RELEASE_TAG}}}"
+XUI_XRAY_VERSION="${XUI_XRAY_VERSION:-26.3.27}"
 
 resolve_install_script_dir() {
     local script_source="${BASH_SOURCE[0]:-$0}"
@@ -97,13 +99,28 @@ find_local_source_dir() {
     return 1
 }
 
+get_xray_release_asset_name() {
+    case "${1}" in
+        amd64)
+            echo "Xray-linux-64.zip"
+            ;;
+        arm64)
+            echo "Xray-linux-arm64-v8a.zip"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 sync_default_xray_assets() {
     local xray_zip="/tmp/xray-${arch}.zip"
-    local xray_url="${XUI_XRAY_URL:-${XUI_RELEASES_BASE}/xray-linux-${arch}.zip}"
+    local xray_asset_name=""
+    local xray_url=""
     local candidate=""
     local local_candidates=(
-        "${INSTALL_SCRIPT_DIR}/releases/xray-linux-${arch}.zip"
-        "/usr/local/x-ui/releases/xray-linux-${arch}.zip"
+        "${INSTALL_SCRIPT_DIR}/releases/$(get_xray_release_asset_name "${arch}")"
+        "/usr/local/x-ui/releases/$(get_xray_release_asset_name "${arch}")"
     )
 
     case "${arch}" in
@@ -116,19 +133,22 @@ sync_default_xray_assets() {
     esac
 
     command -v unzip >/dev/null 2>&1 || error_exit "未找到 unzip，无法同步默认 xray 版本。"
+    xray_asset_name="$(get_xray_release_asset_name "${arch}")" || error_exit "无法确定 xray 资源包名称。"
+    xray_url="${XUI_XRAY_URL:-${XUI_RELEASES_BASE}/${xray_asset_name}}"
 
     rm -f "${xray_zip}"
     for candidate in "${local_candidates[@]}"; do
         if [[ -f "${candidate}" ]]; then
+            echo -e "${green}使用 N5-UI 固定 Runtime 资源包: ${candidate}${plain}"
             cp -f "${candidate}" "${xray_zip}"
             break
         fi
     done
 
     if [[ ! -f "${xray_zip}" ]]; then
-        echo -e "${yellow}同步默认 xray 资源包: ${xray_url}${plain}"
+        echo -e "${yellow}下载 N5-UI 固定 Runtime 资源包: ${xray_url}${plain}"
         if ! download_file "${xray_zip}" "${xray_url}"; then
-            echo -e "${red}下载默认 xray 资源包失败${plain}"
+            echo -e "${red}下载 N5-UI Runtime 资源包失败：${xray_url}${plain}"
             return 1
         fi
     fi
@@ -539,14 +559,19 @@ install_x-ui() {
     cd /usr/local/ || error_exit "无法进入 /usr/local 目录。"
 
     local last_version
+    local display_version
     local package_arch="${arch}"
     local package_file
     local url
     local local_source_dir=""
     if [[ $# -eq 0 || -z "${1:-}" ]]; then
-        last_version="n3-ui-source"
+        last_version="${XUI_RELEASE_TAG}"
     else
         last_version="$1"
+    fi
+    display_version="${last_version}"
+    if [[ "${display_version}" != v* ]]; then
+        display_version="v${display_version}"
     fi
     local_source_dir="$(find_local_source_dir || true)"
     if [[ -e /usr/local/x-ui/ ]]; then
@@ -558,7 +583,6 @@ install_x-ui() {
         if ! cp -a "${local_source_dir}" /usr/local/x-ui; then
             error_exit "复制本地源码到 /usr/local/x-ui 失败。"
         fi
-        rm -rf /usr/local/x-ui/.git
         cd /usr/local/x-ui || error_exit "无法进入 /usr/local/x-ui 目录。"
         install_build_toolchain || error_exit "编译依赖安装失败。"
         ensure_go_toolchain || error_exit "Go 工具链安装失败。"
@@ -569,18 +593,18 @@ install_x-ui() {
     elif [[ "${INSTALL_MODE}" == "source" ]]; then
         local build_root
         local source_dir
-        build_root="$(mktemp -d /tmp/n3-ui-build.XXXXXX)"
+        build_root="$(mktemp -d /tmp/n5-ui-build.XXXXXX)"
         source_dir="${build_root}/repo"
         echo -e "install source: ${XUI_REPO_URL} (${XUI_REPO_BRANCH})"
         install_build_toolchain || error_exit "编译依赖安装失败。"
         ensure_go_toolchain || error_exit "Go 工具链安装失败。"
         if ! git clone --depth 1 --branch "${XUI_REPO_BRANCH}" "${XUI_REPO_URL}" "${source_dir}"; then
             rm -rf "${build_root}"
-            error_exit "clone n3-ui 源码失败。"
+            error_exit "clone n5-ui 源码失败。"
         fi
         cd "${source_dir}" || {
             rm -rf "${build_root}"
-            error_exit "无法进入 n3-ui 源码目录。"
+            error_exit "无法进入 n5-ui 源码目录。"
         }
         if ! CGO_ENABLED=1 GO111MODULE=on /usr/local/bin/go build -o x-ui .; then
             rm -rf "${build_root}"
@@ -592,9 +616,8 @@ install_x-ui() {
         }
         if ! cp -a "${source_dir}" /usr/local/x-ui; then
             rm -rf "${build_root}"
-            error_exit "复制 n3-ui 源码到 /usr/local/x-ui 失败。"
+            error_exit "复制 n5-ui 源码到 /usr/local/x-ui 失败。"
         fi
-        rm -rf /usr/local/x-ui/.git
         rm -rf "${build_root}"
     else
         if [[ "${package_arch}" == "arm64" ]]; then
@@ -605,7 +628,7 @@ install_x-ui() {
         package_file="/usr/local/x-ui-linux-${package_arch}.tar.gz"
         echo -e "install source: ${url}"
         if ! download_file "${package_file}" "${url}"; then
-            error_exit "download failed, please check n3-ui release assets"
+            error_exit "download failed, please check n5-ui release assets"
         fi
         if ! tar -tzf "${package_file}" >/dev/null 2>&1; then
             error_exit "下载的 x-ui 安装包损坏：${package_file}"
@@ -644,7 +667,7 @@ install_x-ui() {
     # ── 安装完成，展示面板信息 ─────────────────────────────────────────────────
     echo -e ""
     echo -e "${green}================================================================${plain}"
-    echo -e "${green}  x-ui v${last_version} 安装完成，面板已启动！${plain}"
+    echo -e "${green}  x-ui ${display_version} 安装完成，面板已启动！${plain}"
     echo -e "${green}================================================================${plain}"
     echo -e ""
     echo -e "  ${yellow}面板登录信息${plain}"
