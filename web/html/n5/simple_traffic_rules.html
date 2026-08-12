@@ -6,6 +6,12 @@
     {{ template "commonSider" . }}
     <a-layout id="content-layout">
         <a-layout-content style="margin: 24px 16px;">
+            <a-alert
+                type="info"
+                show-icon
+                style="margin-bottom: 16px;"
+                message="分流规则采用快照模式：修改规则组不会自动影响已创建的出口规则；如需应用最新规则，请重新创建对应出口规则。">
+            </a-alert>
             <a-card title="创建分流规则组">
                 <a-form layout="vertical">
                     <a-row :gutter="12">
