@@ -63,6 +63,20 @@
                             </a-form-item>
                         </a-col>
                     </a-row>
+                    <a-row :gutter="12" v-if="form.trafficType === 'group'">
+                        <a-col :xs="24" :sm="16">
+                            <a-form-item label="分流规则组">
+                                <a-select v-model="form.groupId" style="width: 100%" placeholder="选择分流规则组">
+                                    <a-select-option v-for="item in groups" :key="item.id" :value="item.id">
+                                        [[ item.name ]] ([[ item.ruleCount ]])
+                                    </a-select-option>
+                                </a-select>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="8" style="display:flex;align-items:center;">
+                            <a-button style="margin-top: 6px" @click="openTrafficRules">管理分流规则</a-button>
+                        </a-col>
+                    </a-row>
                     <a-row :gutter="12" v-if="form.trafficType === 'custom-domain'">
                         <a-col :xs="24" :sm="16">
                             <a-form-item label="自定义域名">
@@ -73,6 +87,7 @@
                     <a-button type="primary" @click="createRule">添加</a-button>
                     <a-button style="margin-left: 8px" @click="resetForm">重置</a-button>
                     <a-button style="margin-left: 8px" @click="openSimpleEgress">返回出口</a-button>
+                    <a-button style="margin-left: 8px" @click="openTrafficRules">分流规则</a-button>
                 </a-form>
             </a-card>
 
@@ -86,9 +101,19 @@
                     <a-table-column title="流量类型">
                         <template slot-scope="text, row">
                             <span>[[ row.trafficLabel ]]</span>
+                            <div v-if="row.groupName" style="color: rgba(0, 0, 0, 0.45); font-size: 12px;">
+                                规则组: [[ row.groupName ]]
+                            </div>
                             <div v-if="row.customDomain" style="color: rgba(0, 0, 0, 0.45); font-size: 12px;">
                                 [[ row.customDomain ]]
                             </div>
+                        </template>
+                    </a-table-column>
+                    <a-table-column title="来源">
+                        <template slot-scope="text, row">
+                            <span v-if="row.trafficType === 'group'">[[ row.groupName || '分流规则组' ]]</span>
+                            <span v-else-if="row.trafficType === 'custom-domain'">自定义</span>
+                            <span v-else>[[ row.trafficLabel ]]</span>
                         </template>
                     </a-table-column>
                     <a-table-column title="出口">
@@ -116,6 +141,7 @@
     const defaultRuleForm = () => ({
         inboundId: undefined,
         trafficType: 'all',
+        groupId: undefined,
         egressId: undefined,
         customDomain: '',
     });
@@ -127,6 +153,7 @@
             rules: [],
             inbounds: [],
             egresses: [],
+            groups: [],
             trafficTypes: [],
             form: defaultRuleForm(),
             n5Enabled: false,
@@ -150,12 +177,16 @@
                 this.rules = msg.obj.rules || [];
                 this.inbounds = msg.obj.inbounds || [];
                 this.egresses = msg.obj.egresses || [];
+                this.groups = msg.obj.groups || [];
                 this.trafficTypes = msg.obj.trafficTypes || [];
                 if (!this.form.inboundId && this.inbounds.length > 0) {
                     this.form.inboundId = this.inbounds[0].id;
                 }
                 if (!this.form.egressId && this.egresses.length > 0) {
                     this.form.egressId = this.egresses[0].id;
+                }
+                if (!this.form.groupId && this.groups.length > 0) {
+                    this.form.groupId = this.groups[0].id;
                 }
             },
             resetForm() {
@@ -166,11 +197,17 @@
                 if (this.egresses.length > 0) {
                     this.form.egressId = this.egresses[0].id;
                 }
+                if (this.groups.length > 0) {
+                    this.form.groupId = this.groups[0].id;
+                }
             },
             async createRule() {
                 const payload = Object.assign({}, this.form);
                 if (payload.trafficType !== 'custom-domain') {
                     payload.customDomain = '';
+                }
+                if (payload.trafficType !== 'group') {
+                    payload.groupId = 0;
                 }
                 const msg = await HttpUtil.post('/n5/api/simple/rule/add', payload);
                 if (msg.success) {
@@ -198,6 +235,9 @@
             },
             openSimpleEgress() {
                 location.href = `${basePath}n5/simple`;
+            },
+            openTrafficRules() {
+                location.href = `${basePath}n5/simple/traffic-rules`;
             },
         },
         async mounted() {

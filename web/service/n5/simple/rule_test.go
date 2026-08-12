@@ -155,9 +155,7 @@ func TestSimpleRuleServiceListAndCustomDomain(t *testing.T) {
 	}
 	for _, name := range []string{
 		simpleTrafficAll,
-		simpleTrafficAI,
-		simpleTrafficGame,
-		simpleTrafficStreaming,
+		simpleTrafficGroup,
 		simpleTrafficCustomDomain,
 	} {
 		if !trafficSet[name] {
@@ -166,13 +164,95 @@ func TestSimpleRuleServiceListAndCustomDomain(t *testing.T) {
 	}
 }
 
+func TestSimpleRuleServiceCreateFromGroupSnapshot(t *testing.T) {
+	initSimpleTestDB(t)
+
+	groupSvc := NewTrafficRuleGroupService()
+	group, err := groupSvc.CreateGroup(&CreateTrafficRuleGroupRequest{GroupType: simpleTrafficAI})
+	if err != nil {
+		t.Fatalf("create traffic rule group failed: %v", err)
+	}
+
+	egressSvc := &n5service.EgressService{}
+	egress, err := egressSvc.Create(&n5model.Egress{
+		Name:         "group-egress",
+		Protocol:     "freedom",
+		Enabled:      true,
+		OutboundJSON: `{"protocol":"freedom","settings":{}}`,
+	})
+	if err != nil {
+		t.Fatalf("create egress failed: %v", err)
+	}
+
+	inbound := &model.Inbound{
+		UserId:         1,
+		Remark:         "group-inbound",
+		Enable:         true,
+		Listen:         "0.0.0.0",
+		Port:           33021,
+		Protocol:       model.Socks,
+		Settings:       `{"auth":"noauth","udp":false,"ip":"127.0.0.1"}`,
+		StreamSettings: `{}`,
+		Tag:            "group-inbound-tag",
+		Sniffing:       `{}`,
+	}
+	if err := database.GetDB().Create(inbound).Error; err != nil {
+		t.Fatalf("create inbound failed: %v", err)
+	}
+
+	svc := NewRuleService()
+	created, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{
+		InboundId: inbound.Id,
+		GroupId:   group.Id,
+		EgressId:  egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create simple group snapshot rule failed: %v", err)
+	}
+	if created.TrafficType != simpleTrafficGroup {
+		t.Fatalf("unexpected traffic type: %#v", created)
+	}
+	if created.GroupId != group.Id || created.GroupName != group.Name {
+		t.Fatalf("unexpected group metadata: %#v", created)
+	}
+
+	policySvc := &n5service.TrafficPolicyService{}
+	policy, err := policySvc.GetPolicy(created.PolicyId)
+	if err != nil {
+		t.Fatalf("get created policy failed: %v", err)
+	}
+	meta, ok := parseSimpleRuleRemark(policy.Remark)
+	if !ok || meta.TrafficType != simpleTrafficGroup || meta.GroupId != group.Id {
+		t.Fatalf("unexpected created remark: %q %#v", policy.Remark, meta)
+	}
+
+	rules, err := policySvc.ListRules(created.PolicyId)
+	if err != nil {
+		t.Fatalf("list rules failed: %v", err)
+	}
+	if len(rules) != group.RuleCount {
+		t.Fatalf("unexpected snapshot rule count: %d", len(rules))
+	}
+	for _, rule := range rules {
+		if rule.TargetType != "egress" || rule.TargetId != egress.Id {
+			t.Fatalf("unexpected snapshot target: %#v", rule)
+		}
+	}
+
+	fragments, err := (&n5service.XrayExtService{}).GenerateRoutingFragments()
+	if err != nil {
+		t.Fatalf("generate routing fragments failed: %v", err)
+	}
+	assertSimpleRuleFragment(t, fragments, inbound.Tag, egress.Tag, "domain:openai.com", true)
+}
+
 func TestParseCustomDomainRule(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       string
-		wantMode    string
-		wantValue   string
-		wantDisplay string
+		name         string
+		input        string
+		wantMode     string
+		wantValue    string
+		wantDisplay  string
 	}{
 		{
 			name:        "bare domain defaults to suffix match",
@@ -211,7 +291,8 @@ func TestParseCustomDomainRule(t *testing.T) {
 				t.Fatalf("parseCustomDomainRule(%q) returned error: %v", tt.input, err)
 			}
 			if gotMode != tt.wantMode || gotValue != tt.wantValue || gotDisplay != tt.wantDisplay {
-				t.Fatalf("parseCustomDomainRule(%q) = (%q, %q, %q), want (%q, %q, %q)", tt.input, gotMode, gotValue, gotDisplay, tt.wantMode, tt.wantValue, tt.wantDisplay)
+				t.Fatalf("parseCustomDomainRule(%q) = (%q, %q, %q), want (%q, %q, %q)",
+					tt.input, gotMode, gotValue, gotDisplay, tt.wantMode, tt.wantValue, tt.wantDisplay)
 			}
 		})
 	}

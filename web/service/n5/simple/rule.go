@@ -16,6 +16,7 @@ const (
 	simpleRuleRemarkPrefix = "n5-simple|"
 
 	simpleTrafficAll          = "all"
+	simpleTrafficGroup        = "group"
 	simpleTrafficAI           = "ai"
 	simpleTrafficGame         = "game"
 	simpleTrafficStreaming    = "streaming"
@@ -33,6 +34,8 @@ type trafficPolicyManager interface {
 	List() ([]*n5model.TrafficPolicy, error)
 	UpdatePolicy(policy *n5model.TrafficPolicy) (*n5model.TrafficPolicy, error)
 	DeletePolicy(id int) error
+	EnablePolicy(id int) (*n5model.TrafficPolicy, error)
+	DisablePolicy(id int) (*n5model.TrafficPolicy, error)
 	AddRule(rule *n5model.TrafficPolicyRule) (*n5model.TrafficPolicyRule, error)
 	ListRules(policyId int) ([]*n5model.TrafficPolicyRule, error)
 	ListBindings() ([]*n5model.TrafficPolicyBinding, error)
@@ -44,6 +47,11 @@ type trafficTemplateManager interface {
 	Create(req *n5service.TrafficTemplateCreateRequest) (*n5service.TrafficTemplateCreateResult, error)
 }
 
+type trafficRuleGroupManager interface {
+	ListGroupOptions() ([]*TrafficRuleGroupOption, error)
+	GetGroup(id int) (*TrafficRuleGroup, error)
+}
+
 type SimpleRule struct {
 	Id              int    `json:"id"`
 	PolicyId        int    `json:"policyId"`
@@ -52,6 +60,9 @@ type SimpleRule struct {
 	InboundTag      string `json:"inboundTag"`
 	TrafficType     string `json:"trafficType"`
 	TrafficLabel    string `json:"trafficLabel"`
+	GroupId         int    `json:"groupId"`
+	GroupName       string `json:"groupName"`
+	GroupType       string `json:"groupType"`
 	CustomDomain    string `json:"customDomain"`
 	EgressId        int    `json:"egressId"`
 	EgressName      string `json:"egressName"`
@@ -70,6 +81,7 @@ type SimpleRuleListResult struct {
 	Rules        []*SimpleRule             `json:"rules"`
 	Inbounds     []*SimpleInboundOption    `json:"inbounds"`
 	Egresses     []*SimpleRuleEgressOption `json:"egresses"`
+	Groups       []*TrafficRuleGroupOption `json:"groups"`
 	TrafficTypes []*SimpleTrafficOption    `json:"trafficTypes"`
 }
 
@@ -97,6 +109,7 @@ type SimpleTrafficOption struct {
 type CreateSimpleRuleRequest struct {
 	InboundId    int    `json:"inboundId" form:"inboundId"`
 	TrafficType  string `json:"trafficType" form:"trafficType"`
+	GroupId      int    `json:"groupId" form:"groupId"`
 	EgressId     int    `json:"egressId" form:"egressId"`
 	CustomDomain string `json:"customDomain" form:"customDomain"`
 }
@@ -106,6 +119,7 @@ type RuleService struct {
 	egressService   egressManager
 	policyService   trafficPolicyManager
 	templateService trafficTemplateManager
+	groupService    trafficRuleGroupManager
 }
 
 func NewRuleService() *RuleService {
@@ -114,6 +128,7 @@ func NewRuleService() *RuleService {
 		egressService:   &n5service.EgressService{},
 		policyService:   &n5service.TrafficPolicyService{},
 		templateService: &n5service.TrafficTemplateService{},
+		groupService:    NewTrafficRuleGroupService(),
 	}
 }
 
@@ -145,6 +160,13 @@ func (s *RuleService) getTemplateService() trafficTemplateManager {
 	return &n5service.TrafficTemplateService{}
 }
 
+func (s *RuleService) getGroupService() trafficRuleGroupManager {
+	if s.groupService != nil {
+		return s.groupService
+	}
+	return NewTrafficRuleGroupService()
+}
+
 func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 	policies, err := s.getPolicyService().List()
 	if err != nil {
@@ -159,6 +181,10 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 		return nil, err
 	}
 	egresses, err := s.getEgressService().List()
+	if err != nil {
+		return nil, err
+	}
+	groups, err := s.getGroupService().ListGroupOptions()
 	if err != nil {
 		return nil, err
 	}
@@ -231,6 +257,10 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 		if enabled {
 			status = "enabled"
 		}
+		trafficLabel := simpleTrafficLabel(meta.TrafficType)
+		if meta.TrafficType == simpleTrafficGroup && strings.TrimSpace(meta.GroupName) != "" {
+			trafficLabel = meta.GroupName
+		}
 		items = append(items, &SimpleRule{
 			Id:              policy.Id,
 			PolicyId:        policy.Id,
@@ -238,7 +268,10 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 			InboundName:     simpleInboundName(inbound),
 			InboundTag:      inbound.Tag,
 			TrafficType:     meta.TrafficType,
-			TrafficLabel:    simpleTrafficLabel(meta.TrafficType),
+			TrafficLabel:    trafficLabel,
+			GroupId:         meta.GroupId,
+			GroupName:       meta.GroupName,
+			GroupType:       meta.GroupType,
 			CustomDomain:    meta.CustomDomain,
 			EgressId:        egress.Id,
 			EgressName:      egress.Name,
@@ -265,6 +298,7 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 		Rules:        items,
 		Inbounds:     inboundOptions,
 		Egresses:     egressOptions,
+		Groups:       groups,
 		TrafficTypes: s.buildTrafficTypes(),
 	}, nil
 }
@@ -272,6 +306,9 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRule, error) {
 	if req == nil {
 		return nil, common.NewError("simple rule request is nil")
+	}
+	if req.GroupId > 0 {
+		req.TrafficType = simpleTrafficGroup
 	}
 	trafficType := normalizeSimpleTrafficType(req.TrafficType)
 	if !isSupportedSimpleTrafficType(trafficType) {
@@ -288,6 +325,10 @@ func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 
 	if err := s.ensureInboundAvailableForSimpleRule(inbound.Id); err != nil {
 		return nil, err
+	}
+
+	if req.GroupId > 0 {
+		return s.createGroupSnapshotRule(inbound, egress, req.GroupId)
 	}
 
 	switch trafficType {
@@ -397,6 +438,70 @@ func (s *RuleService) createCustomDomainRule(inbound *model.Inbound, egress *n5m
 	return buildSimpleRule(policy, []*n5model.TrafficPolicyRule{rule}, binding, inbound, egress, simpleTrafficCustomDomain, displayValue), nil
 }
 
+func (s *RuleService) createGroupSnapshotRule(inbound *model.Inbound, egress *n5model.Egress, groupId int) (*SimpleRule, error) {
+	group, err := s.getGroupService().GetGroup(groupId)
+	if err != nil {
+		return nil, err
+	}
+	if group == nil || group.Id <= 0 {
+		return nil, common.NewError("traffic rule group not found")
+	}
+	if !group.Enabled {
+		return nil, common.NewError("traffic rule group is disabled")
+	}
+	if len(group.Rules) == 0 {
+		return nil, common.NewError("traffic rule group has no rules")
+	}
+
+	policy, err := s.getPolicyService().Create(&n5model.TrafficPolicy{
+		Name:    simpleGroupPolicyName(inbound, group.Name),
+		Remark:  buildSimpleGroupSnapshotRemark(group),
+		Enabled: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	createdRules := make([]*n5model.TrafficPolicyRule, 0, len(group.Rules))
+	for _, item := range group.Rules {
+		if item == nil || !item.Enabled {
+			continue
+		}
+		rule, err := s.getPolicyService().AddRule(&n5model.TrafficPolicyRule{
+			PolicyId:   policy.Id,
+			RuleType:   item.RuleType,
+			MatchMode:  item.MatchMode,
+			MatchValue: item.MatchValue,
+			TargetType: "egress",
+			TargetId:   egress.Id,
+			SortOrder:  item.SortOrder,
+			Enabled:    true,
+		})
+		if err != nil {
+			_ = s.getPolicyService().DeletePolicy(policy.Id)
+			return nil, err
+		}
+		createdRules = append(createdRules, rule)
+	}
+	if len(createdRules) == 0 {
+		_ = s.getPolicyService().DeletePolicy(policy.Id)
+		return nil, common.NewError("traffic rule group has no enabled rules")
+	}
+
+	binding, err := s.getPolicyService().BindInboundPolicy(inbound.Id, policy.Id)
+	if err != nil {
+		_ = s.getPolicyService().DeletePolicy(policy.Id)
+		return nil, err
+	}
+
+	item := buildSimpleRule(policy, createdRules, binding, inbound, egress, simpleTrafficGroup, "")
+	item.GroupId = group.Id
+	item.GroupName = group.Name
+	item.GroupType = group.GroupType
+	item.TrafficLabel = group.Name
+	return item, nil
+}
+
 func (s *RuleService) ensureInboundAvailableForSimpleRule(inboundId int) error {
 	bindings, err := s.getPolicyService().ListBindings()
 	if err != nil {
@@ -426,30 +531,21 @@ func (s *RuleService) buildTrafficTypes() []*SimpleTrafficOption {
 			Description: "该入口的全部流量走指定出口。",
 		},
 		{
-			Value:       simpleTrafficCustomDomain,
-			Label:       simpleTrafficLabel(simpleTrafficCustomDomain),
-			Description: "为单个域名生成简单分流规则。",
+			Value:       simpleTrafficGroup,
+			Label:       simpleTrafficLabel(simpleTrafficGroup),
+			Description: "从分流规则组复制规则并生成执行策略。",
 		},
-	}
-
-	templates, err := s.getTemplateService().List()
-	if err != nil {
-		return items
-	}
-	for _, template := range templates {
-		items = append(items, &SimpleTrafficOption{
-			Value:       normalizeSimpleTrafficType(template.Name),
-			Label:       template.DisplayName,
-			Description: template.Description,
-		})
+	        {
+	            Value:       simpleTrafficCustomDomain,
+	            Label:       simpleTrafficLabel(simpleTrafficCustomDomain),
+	            Description: "为单个域名生成简单分流规则。",
+	        },
 	}
 	sort.Slice(items, func(i, j int) bool {
 		order := map[string]int{
 			simpleTrafficAll:          1,
-			simpleTrafficAI:           2,
-			simpleTrafficGame:         3,
-			simpleTrafficStreaming:    4,
-			simpleTrafficCustomDomain: 5,
+			simpleTrafficGroup:        2,
+			simpleTrafficCustomDomain: 3,
 		}
 		return order[items[i].Value] < order[items[j].Value]
 	})
@@ -458,6 +554,9 @@ func (s *RuleService) buildTrafficTypes() []*SimpleTrafficOption {
 
 type simpleRuleRemark struct {
 	TrafficType  string
+	GroupId      int
+	GroupName    string
+	GroupType    string
 	CustomDomain string
 }
 
@@ -479,6 +578,9 @@ func buildSimpleRule(policy *n5model.TrafficPolicy, rules []*n5model.TrafficPoli
 		InboundTag:      inbound.Tag,
 		TrafficType:     trafficType,
 		TrafficLabel:    simpleTrafficLabel(trafficType),
+		GroupId:         0,
+		GroupName:       "",
+		GroupType:       "",
 		CustomDomain:    customDomain,
 		EgressId:        egress.Id,
 		EgressName:      egress.Name,
@@ -518,12 +620,39 @@ func parseSimpleRuleRemark(remark string) (*simpleRuleRemark, bool) {
 		if strings.HasPrefix(part, "type=") {
 			meta.TrafficType = normalizeSimpleTrafficType(strings.TrimPrefix(part, "type="))
 		}
+		if strings.HasPrefix(part, "groupId=") {
+			groupID, err := strconv.Atoi(strings.TrimPrefix(part, "groupId="))
+			if err == nil && groupID > 0 {
+				meta.GroupId = groupID
+			}
+		}
+		if strings.HasPrefix(part, "groupName=") {
+			value, err := url.QueryUnescape(strings.TrimPrefix(part, "groupName="))
+			if err == nil {
+				meta.GroupName = value
+			}
+		}
+		if strings.HasPrefix(part, "groupType=") {
+			value, err := url.QueryUnescape(strings.TrimPrefix(part, "groupType="))
+			if err == nil {
+				meta.GroupType = normalizeSimpleGroupType(value)
+			}
+		}
 		if strings.HasPrefix(part, "value=") {
 			value, err := url.QueryUnescape(strings.TrimPrefix(part, "value="))
 			if err == nil {
 				meta.CustomDomain = value
 			}
 		}
+	}
+	if meta.TrafficType == simpleTrafficGroup {
+		if meta.GroupId <= 0 {
+			return nil, false
+		}
+		if meta.GroupName == "" {
+			meta.GroupName = "group-" + strconv.Itoa(meta.GroupId)
+		}
+		return meta, true
 	}
 	if !isSupportedSimpleTrafficType(meta.TrafficType) {
 		return nil, false
@@ -537,6 +666,18 @@ func simplePolicyName(inbound *model.Inbound, trafficType string) string {
 		name = "inbound-" + strconv.Itoa(inbound.Id)
 	}
 	return "Simple " + simpleTrafficLabel(trafficType) + " - " + name
+}
+
+func simpleGroupPolicyName(inbound *model.Inbound, groupName string) string {
+	name := simpleInboundName(inbound)
+	if name == "" {
+		name = "inbound-" + strconv.Itoa(inbound.Id)
+	}
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		groupName = "分流规则"
+	}
+	return "Simple " + groupName + " - " + name
 }
 
 func simpleInboundName(inbound *model.Inbound) string {
@@ -562,6 +703,8 @@ func simpleTrafficLabel(trafficType string) string {
 		return "游戏分流"
 	case simpleTrafficStreaming:
 		return "流媒体分流"
+	case simpleTrafficGroup:
+		return "分流规则"
 	case simpleTrafficCustomDomain:
 		return "自定义域名"
 	default:
@@ -575,7 +718,7 @@ func normalizeSimpleTrafficType(trafficType string) string {
 
 func isSupportedSimpleTrafficType(trafficType string) bool {
 	switch normalizeSimpleTrafficType(trafficType) {
-	case simpleTrafficAll, simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming, simpleTrafficCustomDomain:
+	case simpleTrafficAll, simpleTrafficGroup, simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming, simpleTrafficCustomDomain:
 		return true
 	default:
 		return false

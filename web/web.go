@@ -215,6 +215,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	n5controller.NewXrayController(g)
 	n5simplecontroller.NewEgressController(g)
 	n5simplecontroller.NewRuleController(g)
+	n5simplecontroller.NewTrafficRuleGroupController(g)
 
 	return engine, nil
 }
