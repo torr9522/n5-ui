@@ -607,6 +607,6 @@ func parseCustomDomainRule(raw string) (string, string, string, error) {
 		}
 		return "keyword", match, "keyword:" + match, nil
 	default:
-		return "exact", value, "full:" + value, nil
+		return "suffix", value, "domain:" + value, nil
 	}
 }

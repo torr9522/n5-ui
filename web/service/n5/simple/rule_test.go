@@ -166,6 +166,57 @@ func TestSimpleRuleServiceListAndCustomDomain(t *testing.T) {
 	}
 }
 
+func TestParseCustomDomainRule(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantMode    string
+		wantValue   string
+		wantDisplay string
+	}{
+		{
+			name:        "bare domain defaults to suffix match",
+			input:       "openai.com",
+			wantMode:    "suffix",
+			wantValue:   "openai.com",
+			wantDisplay: "domain:openai.com",
+		},
+		{
+			name:        "explicit domain keeps suffix match",
+			input:       "domain:openai.com",
+			wantMode:    "suffix",
+			wantValue:   "openai.com",
+			wantDisplay: "domain:openai.com",
+		},
+		{
+			name:        "explicit full keeps exact match",
+			input:       "full:openai.com",
+			wantMode:    "exact",
+			wantValue:   "openai.com",
+			wantDisplay: "full:openai.com",
+		},
+		{
+			name:        "keyword keeps keyword match",
+			input:       "keyword:openai",
+			wantMode:    "keyword",
+			wantValue:   "openai",
+			wantDisplay: "keyword:openai",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotMode, gotValue, gotDisplay, err := parseCustomDomainRule(tt.input)
+			if err != nil {
+				t.Fatalf("parseCustomDomainRule(%q) returned error: %v", tt.input, err)
+			}
+			if gotMode != tt.wantMode || gotValue != tt.wantValue || gotDisplay != tt.wantDisplay {
+				t.Fatalf("parseCustomDomainRule(%q) = (%q, %q, %q), want (%q, %q, %q)", tt.input, gotMode, gotValue, gotDisplay, tt.wantMode, tt.wantValue, tt.wantDisplay)
+			}
+		})
+	}
+}
+
 func assertSimpleRuleFragment(t *testing.T, fragments map[string]interface{}, inboundTag string, outboundTag string, domain string, expect bool) {
 	t.Helper()
 	rules, _ := fragments["rules"].([]interface{})
