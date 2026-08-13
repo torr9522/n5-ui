@@ -13,7 +13,13 @@ import (
 	"time"
 )
 
-const shareAddressPath = "/etc/x-ui/share_addresses.json"
+var shareAddressPath = "/etc/x-ui/share_addresses.json"
+
+func SetShareAddressPathForTest(path string) string {
+	old := shareAddressPath
+	shareAddressPath = path
+	return old
+}
 
 type ShareAddress struct {
 	Id        string    `json:"id"`

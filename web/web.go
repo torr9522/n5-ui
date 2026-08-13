@@ -207,6 +207,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	s.index = controller.NewIndexController(g)
 	s.server = controller.NewServerController(g)
 	s.xui = controller.NewXUIController(g)
+	controller.NewPublicSubscriptionController(g)
 	n5controller.NewEgressController(g)
 	n5controller.NewEgressLabelController(g)
 	n5controller.NewPoolController(g)
