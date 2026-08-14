@@ -80,7 +80,7 @@ func TestTrafficTemplateServiceCreatePolicyRulesAndBinding(t *testing.T) {
 	if result.Binding == nil || result.Binding.InboundId != inbound.Id || result.Binding.PolicyId != result.Policy.Id {
 		t.Fatalf("unexpected created binding: %#v", result.Binding)
 	}
-	if len(result.Rules) != 5 {
+	if len(result.Rules) != 12 {
 		t.Fatalf("unexpected created rule count: %d", len(result.Rules))
 	}
 	for index, rule := range result.Rules {

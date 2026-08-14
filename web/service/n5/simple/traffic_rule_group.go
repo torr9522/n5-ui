@@ -69,6 +69,12 @@ type TrafficRuleGroupService struct {
 	policyService trafficPolicyManager
 }
 
+var builtinSimpleGroupTypes = []string{
+	simpleTrafficAI,
+	simpleTrafficGame,
+	simpleTrafficStreaming,
+}
+
 func NewTrafficRuleGroupService() *TrafficRuleGroupService {
 	return &TrafficRuleGroupService{
 		policyService: &n5service.TrafficPolicyService{},
@@ -83,6 +89,9 @@ func (s *TrafficRuleGroupService) getPolicyService() trafficPolicyManager {
 }
 
 func (s *TrafficRuleGroupService) ListGroups() ([]*TrafficRuleGroup, error) {
+	if err := s.EnsureBuiltinGroups(); err != nil {
+		return nil, err
+	}
 	policies, err := s.getPolicyService().List()
 	if err != nil {
 		return nil, err
@@ -103,6 +112,9 @@ func (s *TrafficRuleGroupService) ListGroups() ([]*TrafficRuleGroup, error) {
 }
 
 func (s *TrafficRuleGroupService) ListGroupOptions() ([]*TrafficRuleGroupOption, error) {
+	if err := s.EnsureBuiltinGroups(); err != nil {
+		return nil, err
+	}
 	groups, err := s.ListGroups()
 	if err != nil {
 		return nil, err
@@ -198,10 +210,56 @@ func (s *TrafficRuleGroupService) UpdateGroup(id int, req *UpdateTrafficRuleGrou
 }
 
 func (s *TrafficRuleGroupService) DeleteGroup(id int) error {
-	if _, _, err := s.getGroupPolicy(id); err != nil {
+	_, meta, err := s.getGroupPolicy(id)
+	if err != nil {
 		return err
 	}
+	if isBuiltinSimpleGroupType(meta.GroupType) {
+		return common.NewError("内置规则组不可删除")
+	}
 	return s.getPolicyService().DeletePolicy(id)
+}
+
+func (s *TrafficRuleGroupService) EnsureBuiltinGroups() error {
+	for _, groupType := range builtinSimpleGroupTypes {
+		exists, err := s.builtinGroupExists(groupType)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		policy, err := s.getPolicyService().Create(&n5model.TrafficPolicy{
+			Name:    defaultSimpleGroupName(groupType),
+			Remark:  buildSimpleRuleGroupRemark(groupType),
+			Enabled: true,
+		})
+		if err != nil {
+			return err
+		}
+		if err := s.seedGroupRules(policy.Id, groupType); err != nil {
+			_ = s.getPolicyService().DeletePolicy(policy.Id)
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *TrafficRuleGroupService) builtinGroupExists(groupType string) (bool, error) {
+	policies, err := s.getPolicyService().List()
+	if err != nil {
+		return false, err
+	}
+	for _, policy := range policies {
+		meta, ok := parseSimpleRuleGroupRemark(policy.Remark)
+		if !ok {
+			continue
+		}
+		if meta.GroupType == groupType {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *TrafficRuleGroupService) AddDomainRule(req *AddTrafficRuleDomainRequest) (*TrafficRuleGroupRule, error) {

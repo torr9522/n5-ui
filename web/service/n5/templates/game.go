@@ -9,7 +9,17 @@ func Game() *Definition {
 			{RuleType: "domain", MatchMode: "suffix", MatchValue: "steampowered.com"},
 			{RuleType: "domain", MatchMode: "suffix", MatchValue: "steamcontent.com"},
 			{RuleType: "domain", MatchMode: "suffix", MatchValue: "steamstatic.com"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "steamcommunity.com"},
 			{RuleType: "domain", MatchMode: "suffix", MatchValue: "riotgames.com"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "leagueoflegends.com"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "pvp.net"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "epicgames.com"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "epicgamescdn.com"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "battle.net"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "blizzard.com"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "playstation.com"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "xbox.com"},
+			{RuleType: "domain", MatchMode: "suffix", MatchValue: "nintendo.com"},
 		},
 	}
 }

@@ -168,9 +168,9 @@ func TestSimpleRuleServiceCreateFromGroupSnapshot(t *testing.T) {
 	initSimpleTestDB(t)
 
 	groupSvc := NewTrafficRuleGroupService()
-	group, err := groupSvc.CreateGroup(&CreateTrafficRuleGroupRequest{GroupType: simpleTrafficAI})
+	group, err := mustGetBuiltinGroup(groupSvc, simpleTrafficAI)
 	if err != nil {
-		t.Fatalf("create traffic rule group failed: %v", err)
+		t.Fatalf("get builtin traffic rule group failed: %v", err)
 	}
 
 	egressSvc := &n5service.EgressService{}
@@ -244,6 +244,54 @@ func TestSimpleRuleServiceCreateFromGroupSnapshot(t *testing.T) {
 		t.Fatalf("generate routing fragments failed: %v", err)
 	}
 	assertSimpleRuleFragment(t, fragments, inbound.Tag, egress.Tag, "domain:openai.com", true)
+}
+
+func TestSimpleRuleServiceListIncludesBuiltinGroupOptionsOnFreshDB(t *testing.T) {
+	initSimpleTestDB(t)
+
+	egressSvc := &n5service.EgressService{}
+	if _, err := egressSvc.Create(&n5model.Egress{
+		Name:         "fresh-group-egress",
+		Protocol:     "freedom",
+		Enabled:      true,
+		OutboundJSON: `{"protocol":"freedom","settings":{}}`,
+	}); err != nil {
+		t.Fatalf("create egress failed: %v", err)
+	}
+
+	inbound := &model.Inbound{
+		UserId:         1,
+		Remark:         "fresh-group-inbound",
+		Enable:         true,
+		Listen:         "0.0.0.0",
+		Port:           33031,
+		Protocol:       model.Socks,
+		Settings:       `{"auth":"noauth","udp":false,"ip":"127.0.0.1"}`,
+		StreamSettings: `{}`,
+		Tag:            "fresh-group-inbound-tag",
+		Sniffing:       `{}`,
+	}
+	if err := database.GetDB().Create(inbound).Error; err != nil {
+		t.Fatalf("create inbound failed: %v", err)
+	}
+
+	svc := NewRuleService()
+	list, err := svc.ListSimpleRules()
+	if err != nil {
+		t.Fatalf("list simple rules failed: %v", err)
+	}
+	if len(list.Groups) != len(builtinSimpleGroupTypes) {
+		t.Fatalf("unexpected builtin group option count: %d", len(list.Groups))
+	}
+	groupTypes := make(map[string]bool)
+	for _, item := range list.Groups {
+		groupTypes[item.GroupType] = true
+	}
+	for _, groupType := range builtinSimpleGroupTypes {
+		if !groupTypes[groupType] {
+			t.Fatalf("missing builtin group option: %s", groupType)
+		}
+	}
 }
 
 func TestParseCustomDomainRule(t *testing.T) {

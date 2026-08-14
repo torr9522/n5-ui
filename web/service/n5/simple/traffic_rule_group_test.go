@@ -1,22 +1,27 @@
 package simple
 
 import (
+	"strings"
 	"testing"
 	"x-ui/database"
 	"x-ui/database/model"
 	n5model "x-ui/database/model/n5"
+	"x-ui/util/common"
 	n5service "x-ui/web/service/n5"
+	n5templates "x-ui/web/service/n5/templates"
 )
 
 func TestTrafficRuleGroupServiceCreateBuiltinAndNoMerge(t *testing.T) {
 	initSimpleTestDB(t)
 
 	svc := NewTrafficRuleGroupService()
-	group, err := svc.CreateGroup(&CreateTrafficRuleGroupRequest{
-		GroupType: simpleTrafficAI,
-	})
+	groups, err := svc.ListGroups()
 	if err != nil {
-		t.Fatalf("create builtin group failed: %v", err)
+		t.Fatalf("list builtin groups failed: %v", err)
+	}
+	group := findGroupByType(groups, simpleTrafficAI)
+	if group == nil {
+		t.Fatal("expected builtin ai group")
 	}
 	if group.GroupType != simpleTrafficAI {
 		t.Fatalf("unexpected group: %#v", group)
@@ -93,9 +98,9 @@ func TestTrafficRuleGroupServiceSnapshotOnlyAffectsExecPolicy(t *testing.T) {
 	initSimpleTestDB(t)
 
 	groupSvc := NewTrafficRuleGroupService()
-	group, err := groupSvc.CreateGroup(&CreateTrafficRuleGroupRequest{GroupType: simpleTrafficAI})
+	group, err := mustGetBuiltinGroup(groupSvc, simpleTrafficAI)
 	if err != nil {
-		t.Fatalf("create group failed: %v", err)
+		t.Fatalf("get builtin group failed: %v", err)
 	}
 
 	inbound := &model.Inbound{
@@ -138,14 +143,272 @@ func TestTrafficRuleGroupServiceSnapshotOnlyAffectsExecPolicy(t *testing.T) {
 		t.Fatalf("generate routing fragments failed: %v", err)
 	}
 	assertSimpleRuleFragment(t, fragments, inbound.Tag, egress.Tag, "domain:openai.com", true)
+}
 
-	if err := groupSvc.DeleteGroup(group.Id); err != nil {
-		t.Fatalf("delete group failed: %v", err)
-	}
+func TestTrafficRuleGroupServiceEnsureBuiltinGroupsFreshDB(t *testing.T) {
+	initSimpleTestDB(t)
 
-	fragments, err = (&n5service.XrayExtService{}).GenerateRoutingFragments()
+	svc := NewTrafficRuleGroupService()
+	groups, err := svc.ListGroups()
 	if err != nil {
-		t.Fatalf("generate routing fragments after group delete failed: %v", err)
+		t.Fatalf("list groups failed: %v", err)
 	}
-	assertSimpleRuleFragment(t, fragments, inbound.Tag, egress.Tag, "domain:openai.com", true)
+	if len(groups) != len(builtinSimpleGroupTypes) {
+		t.Fatalf("unexpected builtin group count: %d", len(groups))
+	}
+
+	options, err := svc.ListGroupOptions()
+	if err != nil {
+		t.Fatalf("list group options failed: %v", err)
+	}
+	if len(options) != len(builtinSimpleGroupTypes) {
+		t.Fatalf("unexpected builtin option count: %d", len(options))
+	}
+
+	policySvc := &n5service.TrafficPolicyService{}
+	policies, err := policySvc.List()
+	if err != nil {
+		t.Fatalf("list policies failed: %v", err)
+	}
+	if len(policies) != len(builtinSimpleGroupTypes) {
+		t.Fatalf("unexpected policy count: %d", len(policies))
+	}
+
+	expected := map[string]string{
+		simpleTrafficAI:        "AI分流",
+		simpleTrafficGame:      "游戏分流",
+		simpleTrafficStreaming: "流媒体分流",
+	}
+	for _, group := range groups {
+		if expected[group.GroupType] != group.Name {
+			t.Fatalf("unexpected builtin group: %#v", group)
+		}
+		if !group.Builtin {
+			t.Fatalf("expected builtin group: %#v", group)
+		}
+		if group.RuleCount == 0 {
+			t.Fatalf("expected builtin rules: %#v", group)
+		}
+		delete(expected, group.GroupType)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("missing builtin groups: %#v", expected)
+	}
+}
+
+func TestTrafficRuleGroupServiceEnsureBuiltinGroupsIsIdempotentAndPreservesChanges(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewTrafficRuleGroupService()
+	if err := svc.EnsureBuiltinGroups(); err != nil {
+		t.Fatalf("ensure builtin groups failed: %v", err)
+	}
+	groups, err := svc.ListGroups()
+	if err != nil {
+		t.Fatalf("list groups failed: %v", err)
+	}
+
+	var aiGroup *TrafficRuleGroup
+	for _, group := range groups {
+		if group.GroupType == simpleTrafficAI {
+			aiGroup = group
+			break
+		}
+	}
+	if aiGroup == nil {
+		t.Fatal("missing ai builtin group")
+	}
+
+	addedRule, err := svc.AddDomainRule(&AddTrafficRuleDomainRequest{
+		GroupId: aiGroup.Id,
+		Domain:  "accounts.google.com",
+	})
+	if err != nil {
+		t.Fatalf("add domain rule failed: %v", err)
+	}
+	if addedRule.DisplayValue != "domain:accounts.google.com" {
+		t.Fatalf("unexpected added rule: %#v", addedRule)
+	}
+
+	if _, err := svc.DisableGroup(aiGroup.Id); err != nil {
+		t.Fatalf("disable ai group failed: %v", err)
+	}
+
+	if err := svc.EnsureBuiltinGroups(); err != nil {
+		t.Fatalf("re-ensure builtin groups failed: %v", err)
+	}
+
+	policySvc := &n5service.TrafficPolicyService{}
+	policies, err := policySvc.List()
+	if err != nil {
+		t.Fatalf("list policies failed: %v", err)
+	}
+	countByType := map[string]int{}
+	for _, policy := range policies {
+		meta, ok := parseSimpleRuleGroupRemark(policy.Remark)
+		if !ok {
+			continue
+		}
+		countByType[meta.GroupType]++
+	}
+	for _, groupType := range builtinSimpleGroupTypes {
+		if countByType[groupType] != 1 {
+			t.Fatalf("unexpected policy count for %s: %d", groupType, countByType[groupType])
+		}
+	}
+
+	aiGroup, err = svc.GetGroup(aiGroup.Id)
+	if err != nil {
+		t.Fatalf("get ai group failed: %v", err)
+	}
+	if aiGroup.Enabled {
+		t.Fatalf("expected ai group to remain disabled: %#v", aiGroup)
+	}
+	found := false
+	for _, rule := range aiGroup.Rules {
+		if rule.DisplayValue == "domain:accounts.google.com" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected added rule to remain after ensure: %#v", aiGroup.Rules)
+	}
+}
+
+func TestTrafficRuleGroupServiceEnsureBuiltinGroupsBackfillsMissingOnly(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewTrafficRuleGroupService()
+	if err := database.GetDB().Where("1 = 1").Delete(&n5model.TrafficPolicyRule{}).Error; err != nil {
+		t.Fatalf("clear policy rules failed: %v", err)
+	}
+	if err := database.GetDB().Where("1 = 1").Delete(&n5model.TrafficPolicy{}).Error; err != nil {
+		t.Fatalf("clear policies failed: %v", err)
+	}
+
+	policy := &n5model.TrafficPolicy{
+		Name:    defaultSimpleGroupName(simpleTrafficAI),
+		Remark:  buildSimpleRuleGroupRemark(simpleTrafficAI),
+		Enabled: true,
+	}
+	if err := database.GetDB().Create(policy).Error; err != nil {
+		t.Fatalf("create existing ai policy failed: %v", err)
+	}
+	if err := database.GetDB().Model(&n5model.TrafficPolicy{}).Where("id = ?", policy.Id).Update("enabled", false).Error; err != nil {
+		t.Fatalf("disable existing ai policy failed: %v", err)
+	}
+	if err := svc.seedGroupRules(policy.Id, simpleTrafficAI); err != nil {
+		t.Fatalf("seed ai rules failed: %v", err)
+	}
+	if err := svc.EnsureBuiltinGroups(); err != nil {
+		t.Fatalf("ensure builtin groups failed: %v", err)
+	}
+
+	groups, err := svc.ListGroups()
+	if err != nil {
+		t.Fatalf("list groups failed: %v", err)
+	}
+	if len(groups) != len(builtinSimpleGroupTypes) {
+		t.Fatalf("unexpected group count: %d", len(groups))
+	}
+	countByType := map[string]int{}
+	for _, group := range groups {
+		countByType[group.GroupType]++
+		if group.GroupType == simpleTrafficAI && group.Enabled {
+			t.Fatalf("expected existing ai group to remain disabled: %#v", group)
+		}
+	}
+	for _, groupType := range builtinSimpleGroupTypes {
+		if countByType[groupType] != 1 {
+			t.Fatalf("unexpected group count for %s: %d", groupType, countByType[groupType])
+		}
+	}
+}
+
+func TestTrafficRuleGroupServiceDeleteProtectsBuiltinOnly(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewTrafficRuleGroupService()
+	groups, err := svc.ListGroups()
+	if err != nil {
+		t.Fatalf("list groups failed: %v", err)
+	}
+	if len(groups) == 0 {
+		t.Fatal("expected builtin groups")
+	}
+	if err := svc.DeleteGroup(groups[0].Id); err == nil || !strings.Contains(err.Error(), "内置规则组不可删除") {
+		t.Fatalf("expected builtin delete protection error, got %v", err)
+	}
+
+	custom, err := svc.CreateGroup(&CreateTrafficRuleGroupRequest{
+		GroupType: simpleTrafficCustom,
+		Name:      "custom domains",
+	})
+	if err != nil {
+		t.Fatalf("create custom group failed: %v", err)
+	}
+	if err := svc.DeleteGroup(custom.Id); err != nil {
+		t.Fatalf("delete custom group failed: %v", err)
+	}
+}
+
+func TestBuiltinTemplatesContainOnlySuffixDomainRules(t *testing.T) {
+	definitions := []*n5templates.Definition{
+		n5templates.AI(),
+		n5templates.Game(),
+		n5templates.Streaming(),
+	}
+
+	for _, definition := range definitions {
+		if definition == nil {
+			t.Fatal("expected builtin template definition")
+		}
+		if len(definition.Rules) == 0 {
+			t.Fatalf("expected rules for template %s", definition.Name)
+		}
+		seen := make(map[string]bool)
+		for _, rule := range definition.Rules {
+			if rule.RuleType != "domain" {
+				t.Fatalf("unexpected rule type in %s: %#v", definition.Name, rule)
+			}
+			if rule.MatchMode != "suffix" {
+				t.Fatalf("unexpected match mode in %s: %#v", definition.Name, rule)
+			}
+			if strings.TrimSpace(rule.MatchValue) == "" {
+				t.Fatalf("unexpected empty match value in %s", definition.Name)
+			}
+			if strings.Contains(rule.MatchValue, "geosite:") {
+				t.Fatalf("unexpected geosite rule in %s: %#v", definition.Name, rule)
+			}
+			if strings.HasPrefix(rule.MatchValue, "full:") {
+				t.Fatalf("unexpected full matcher in %s: %#v", definition.Name, rule)
+			}
+			if seen[rule.MatchValue] {
+				t.Fatalf("unexpected duplicate rule in %s: %s", definition.Name, rule.MatchValue)
+			}
+			seen[rule.MatchValue] = true
+		}
+	}
+}
+
+func mustGetBuiltinGroup(svc *TrafficRuleGroupService, groupType string) (*TrafficRuleGroup, error) {
+	groups, err := svc.ListGroups()
+	if err != nil {
+		return nil, err
+	}
+	group := findGroupByType(groups, groupType)
+	if group == nil {
+		return nil, common.NewError("builtin traffic rule group not found")
+	}
+	return group, nil
+}
+
+func findGroupByType(groups []*TrafficRuleGroup, groupType string) *TrafficRuleGroup {
+	for _, group := range groups {
+		if group != nil && group.GroupType == groupType {
+			return group
+		}
+	}
+	return nil
 }
