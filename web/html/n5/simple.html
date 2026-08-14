@@ -9,6 +9,19 @@
             <a-card title="添加出口">
                 <a-form layout="vertical">
                     <a-row :gutter="12">
+                        <a-col :xs="24" :sm="18">
+                            <a-form-item label="分享链接（可选）">
+                                <a-input v-model.trim="form.shareLink" placeholder="ss:// / vmess:// / vless://"></a-input>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="6">
+                            <a-form-item label="操作">
+                                <a-button type="primary" style="width: 100%" @click="parseShareLink">解析</a-button>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+
+                    <a-row :gutter="12">
                         <a-col :xs="24" :sm="8">
                             <a-form-item label="名称">
                                 <a-input v-model.trim="form.name"></a-input>
@@ -16,9 +29,11 @@
                         </a-col>
                         <a-col :xs="24" :sm="8">
                             <a-form-item label="协议">
-                                <a-select v-model="form.protocol" style="width: 100%">
+                                <a-select v-model="form.protocol" style="width: 100%" @change="onProtocolChange">
                                     <a-select-option value="socks5">SOCKS5</a-select-option>
-                                    <a-select-option value="ss">SS</a-select-option>
+                                    <a-select-option value="ss">Shadowsocks</a-select-option>
+                                    <a-select-option value="vmess">VMess</a-select-option>
+                                    <a-select-option value="vless">VLESS</a-select-option>
                                 </a-select>
                             </a-form-item>
                         </a-col>
@@ -28,6 +43,7 @@
                             </a-form-item>
                         </a-col>
                     </a-row>
+
                     <a-row :gutter="12">
                         <a-col :xs="24" :sm="8">
                             <a-form-item label="端口">
@@ -59,11 +75,102 @@
                                 <a-input-password v-model.trim="form.password"></a-input-password>
                             </a-form-item>
                         </a-col>
+                        <a-col v-if="isProxyProtocol(form.protocol)" :xs="24" :sm="8">
+                            <a-form-item label="UUID">
+                                <a-input v-model.trim="form.uuid"></a-input>
+                            </a-form-item>
+                        </a-col>
                     </a-row>
+
+                    <a-row v-if="isProxyProtocol(form.protocol)" :gutter="12">
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="网络类型">
+                                <a-select v-model="form.network" style="width: 100%" @change="onNetworkChange">
+                                    <a-select-option value="tcp">TCP</a-select-option>
+                                    <a-select-option value="ws">WS</a-select-option>
+                                    <a-select-option value="grpc">gRPC</a-select-option>
+                                </a-select>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="安全类型">
+                                <a-select v-model="form.security" style="width: 100%" @change="onSecurityChange">
+                                    <a-select-option value="none">none</a-select-option>
+                                    <a-select-option value="tls">tls</a-select-option>
+                                    <a-select-option v-if="form.protocol === 'vless'" value="reality">reality</a-select-option>
+                                </a-select>
+                            </a-form-item>
+                        </a-col>
+                        <a-col v-if="form.protocol === 'vmess'" :xs="24" :sm="8">
+                            <a-form-item label="AlterID">
+                                <a-input-number v-model="form.alterId" :min="0" style="width: 100%"></a-input-number>
+                            </a-form-item>
+                        </a-col>
+                        <a-col v-if="form.protocol === 'vless'" :xs="24" :sm="8">
+                            <a-form-item label="Flow">
+                                <a-input v-model.trim="form.flow" placeholder="xtls-rprx-vision"></a-input>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+
+                    <a-row v-if="isProxyProtocol(form.protocol) && form.security !== 'none'" :gutter="12">
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="SNI">
+                                <a-input v-model.trim="form.sni"></a-input>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+
+                    <a-row v-if="isProxyProtocol(form.protocol) && form.network === 'ws'" :gutter="12">
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="Host">
+                                <a-input v-model.trim="form.host"></a-input>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="Path">
+                                <a-input v-model.trim="form.path"></a-input>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+
+                    <a-row v-if="isProxyProtocol(form.protocol) && form.network === 'grpc'" :gutter="12">
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="gRPC ServiceName">
+                                <a-input v-model.trim="form.serviceName"></a-input>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+
+                    <a-row v-if="form.protocol === 'vless' && form.security === 'reality'" :gutter="12">
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="Public Key">
+                                <a-input v-model.trim="form.publicKey"></a-input>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="Short ID">
+                                <a-input v-model.trim="form.shortId"></a-input>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="Fingerprint">
+                                <a-input v-model.trim="form.fingerprint"></a-input>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+
+                    <a-row v-if="form.protocol === 'vless' && form.security === 'reality'" :gutter="12">
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="SpiderX">
+                                <a-input v-model.trim="form.spiderX"></a-input>
+                            </a-form-item>
+                        </a-col>
+                    </a-row>
+
                     <a-button type="primary" @click="createEgress">添加出口</a-button>
                     <a-button style="margin-left: 8px" @click="resetForm">重置</a-button>
                     <a-button style="margin-left: 8px" @click="openRules">出口规则</a-button>
-                    <a-button style="margin-left: 8px" @click="openAdvanced">高级设置</a-button>
                 </a-form>
             </a-card>
 
@@ -75,7 +182,11 @@
                             [[ row.displayLabel || '-' ]]
                         </template>
                     </a-table-column>
-                    <a-table-column title="协议" data-index="protocol"></a-table-column>
+                    <a-table-column title="协议">
+                        <template slot-scope="text, row">
+                            [[ protocolLabel(row.protocol) ]]
+                        </template>
+                    </a-table-column>
                     <a-table-column title="状态">
                         <template slot-scope="text, row">
                             <a-tag :color="statusColor(row.status)">[[ formatStatus(row.status) ]]</a-tag>
@@ -105,6 +216,14 @@
 </a-layout>
 {{template "js" .}}
 <script>
+    const protocolLabels = {
+        socks5: 'SOCKS5',
+        ss: 'Shadowsocks',
+        vmess: 'VMess',
+        vless: 'VLESS',
+        trojan: 'Trojan',
+    };
+
     const defaultForm = () => ({
         name: '',
         protocol: 'socks5',
@@ -113,8 +232,283 @@
         username: '',
         method: 'aes-256-gcm',
         password: '',
+        uuid: '',
+        alterId: 0,
+        network: 'tcp',
+        security: 'none',
+        sni: '',
+        host: '',
+        path: '/',
+        serviceName: '',
+        flow: '',
+        encryption: 'none',
+        fingerprint: 'chrome',
+        publicKey: '',
+        shortId: '',
+        spiderX: '/',
         enabled: true,
+        shareLink: '',
+        supported: true,
+        unsupportedReason: '',
     });
+
+    function protocolTemplate(protocol) {
+        const normalized = String(protocol || '').toLowerCase();
+        const base = {
+            username: '',
+            method: 'aes-256-gcm',
+            password: '',
+            uuid: '',
+            alterId: 0,
+            network: 'tcp',
+            security: 'none',
+            sni: '',
+            host: '',
+            path: '/',
+            serviceName: '',
+            flow: '',
+            encryption: 'none',
+            fingerprint: 'chrome',
+            publicKey: '',
+            shortId: '',
+            spiderX: '/',
+            supported: true,
+            unsupportedReason: '',
+        };
+        if (normalized === 'socks5') {
+            return base;
+        }
+        if (normalized === 'ss') {
+            return Object.assign(base, {
+                method: 'aes-256-gcm',
+            });
+        }
+        if (normalized === 'vmess') {
+            return Object.assign(base, {
+                network: 'tcp',
+                security: 'none',
+            });
+        }
+        if (normalized === 'vless') {
+            return Object.assign(base, {
+                network: 'tcp',
+                security: 'none',
+                encryption: 'none',
+            });
+        }
+        return base;
+    }
+
+    function isProxyProtocol(protocol) {
+        return protocol === 'vmess' || protocol === 'vless';
+    }
+
+    function protocolLabel(protocol) {
+        return protocolLabels[protocol] || protocol || '-';
+    }
+
+    function cloneFormWithProtocol(form, protocol) {
+        const next = Object.assign(defaultForm(), {
+            name: form.name,
+            address: form.address,
+            port: form.port,
+            enabled: form.enabled,
+            shareLink: form.shareLink,
+        }, protocolTemplate(protocol), {
+            protocol: protocol,
+        });
+        return normalizeProtocolForm(next);
+    }
+
+    function normalizeProtocolForm(form) {
+        if (!isProxyProtocol(form.protocol)) {
+            form.network = 'tcp';
+            form.security = 'none';
+            form.sni = '';
+            form.host = '';
+            form.path = '/';
+            form.serviceName = '';
+            form.flow = '';
+            form.encryption = 'none';
+            form.fingerprint = 'chrome';
+            form.publicKey = '';
+            form.shortId = '';
+            form.spiderX = '/';
+            form.uuid = '';
+            form.alterId = 0;
+        }
+
+        if (form.protocol === 'ss') {
+            form.username = '';
+        }
+        if (form.protocol === 'socks5') {
+            form.method = 'aes-256-gcm';
+        }
+        if (form.protocol === 'vmess') {
+            if (form.security !== 'tls') {
+                form.sni = '';
+            }
+            form.flow = '';
+            form.encryption = 'none';
+            form.fingerprint = 'chrome';
+            form.publicKey = '';
+            form.shortId = '';
+            form.spiderX = '/';
+        }
+        if (form.protocol === 'vless') {
+            form.encryption = 'none';
+            if (form.security !== 'reality') {
+                form.publicKey = '';
+                form.shortId = '';
+                form.fingerprint = 'chrome';
+                form.spiderX = '/';
+                if (form.security !== 'tls') {
+                    form.sni = '';
+                }
+            } else if (!form.flow) {
+                form.flow = 'xtls-rprx-vision';
+            }
+        }
+        if (form.network !== 'ws') {
+            form.host = '';
+            form.path = '/';
+        } else if (!form.path) {
+            form.path = '/';
+        }
+        if (form.network !== 'grpc') {
+            form.serviceName = '';
+        }
+        return form;
+    }
+
+    function suggestShareName(currentName, remark, fallbackLabel, address) {
+        if (String(currentName || '').trim()) {
+            return currentName.trim();
+        }
+        if (String(remark || '').trim()) {
+            return remark.trim();
+        }
+        if (String(address || '').trim()) {
+            return address.trim();
+        }
+        return fallbackLabel;
+    }
+
+    function ensureSupportedShareTransport(inbound) {
+        const network = (inbound.stream && inbound.stream.network) || 'tcp';
+        if (!['tcp', 'ws', 'grpc'].includes(network)) {
+            throw new Error('当前 N5 Simple 出口暂不支持该传输方式');
+        }
+        if (network === 'tcp' && inbound.stream.tcp && inbound.stream.tcp.type && inbound.stream.tcp.type !== 'none') {
+            throw new Error('当前 N5 Simple 出口暂不支持该传输方式');
+        }
+        return network;
+    }
+
+    function buildFormFromParsedLink(parsed, protocol, currentForm) {
+        const next = Object.assign(defaultForm(), protocolTemplate(protocol), {
+            protocol: protocol,
+            shareLink: String(currentForm.shareLink || '').trim(),
+            name: suggestShareName(currentForm.name, parsed.remark, protocolLabel(protocol), parsed.address),
+            address: String(parsed.address || '').trim(),
+            port: Number(parsed.inbound.port || 0),
+        });
+        if (!next.address) {
+            throw new Error('缺少地址');
+        }
+        if (!Number.isInteger(next.port) || next.port < 1 || next.port > 65535) {
+            throw new Error('缺少端口');
+        }
+
+        if (protocol === 'ss') {
+            next.method = parsed.inbound.settings.method || '';
+            next.password = parsed.inbound.settings.password || '';
+            if (!next.method || !next.password) {
+                throw new Error('缺少 Shadowsocks method/password');
+            }
+            return normalizeProtocolForm(next);
+        }
+
+        const inbound = parsed.inbound;
+        const network = ensureSupportedShareTransport(inbound);
+        const security = (inbound.stream && inbound.stream.security) || 'none';
+
+        next.uuid = protocol === 'vmess'
+            ? inbound.settings.vmesses[0].id || ''
+            : inbound.settings.vlesses[0].id || '';
+        if (!next.uuid) {
+            throw new Error('缺少 UUID');
+        }
+        next.network = network;
+        next.security = security;
+
+        if (protocol === 'vmess') {
+            if (!['none', 'tls'].includes(security)) {
+                throw new Error('当前 N5 Simple VMess 仅支持 none 或 tls');
+            }
+            next.alterId = Number(inbound.settings.vmesses[0].alterId || 0);
+        }
+
+        if (protocol === 'vless') {
+            if (!['none', 'tls', 'reality'].includes(security)) {
+                throw new Error('当前 N5 Simple VLESS 仅支持 none、tls 或 reality');
+            }
+            next.flow = inbound.settings.vlesses[0].flow || '';
+            next.encryption = inbound.settings.decryption || 'none';
+            if (next.encryption !== 'none') {
+                throw new Error('当前 N5 Simple VLESS 仅支持 encryption=none');
+            }
+            if (security === 'reality' && !['tcp', 'grpc'].includes(network)) {
+                throw new Error('Reality 分享链接仅支持 tcp 或 grpc 传输');
+            }
+        }
+
+        if (security === 'tls') {
+            next.sni = inbound.stream.tls.server || '';
+        }
+        if (network === 'ws') {
+            next.host = inbound.stream.ws.getHeader('Host') || '';
+            next.path = inbound.stream.ws.path || '/';
+        }
+        if (network === 'grpc') {
+            next.serviceName = inbound.stream.grpc.serviceName || '';
+        }
+        if (protocol === 'vless' && security === 'reality') {
+            next.sni = (inbound.stream.reality.serverNames || [])[0] || '';
+            next.fingerprint = inbound.stream.reality.fingerprint || 'chrome';
+            next.publicKey = inbound.stream.reality.publicKey || '';
+            next.shortId = (inbound.stream.reality.shortIds || [])[0] || '';
+            next.spiderX = inbound.stream.reality.spiderX || '/';
+            if (!next.sni || !next.publicKey) {
+                throw new Error('Reality 缺少 pbk/sni 等必要字段');
+            }
+            if (!next.flow) {
+                next.flow = 'xtls-rprx-vision';
+            }
+        }
+
+        return normalizeProtocolForm(next);
+    }
+
+    function parseSimpleShareLink(link, currentForm) {
+        const value = String(link || '').trim();
+        if (!value) {
+            throw new Error('链接格式无效');
+        }
+        if (value.startsWith('ss://')) {
+            return buildFormFromParsedLink(Inbound.parseSSLink(value), 'ss', currentForm);
+        }
+        if (value.startsWith('vmess://')) {
+            return buildFormFromParsedLink(Inbound.parseVMessLink(value), 'vmess', currentForm);
+        }
+        if (value.startsWith('vless://')) {
+            return buildFormFromParsedLink(Inbound.parseVLESSLink(value), 'vless', currentForm);
+        }
+        if (value.startsWith('trojan://')) {
+            throw new Error('当前 N5 Simple 出口不支持 trojan:// 导入');
+        }
+        throw new Error('不支持的协议');
+    }
 
     const app = new Vue({
         el: '#app',
@@ -125,6 +519,8 @@
             form: defaultForm(),
         },
         methods: {
+            isProxyProtocol,
+            protocolLabel,
             async loadEgresses() {
                 const msg = await HttpUtil.get('/n5/api/simple/egress/list');
                 if (msg.success) {
@@ -134,11 +530,24 @@
             resetForm() {
                 this.form = defaultForm();
             },
+            onProtocolChange(value) {
+                this.form = cloneFormWithProtocol(this.form, value);
+            },
+            onNetworkChange() {
+                this.form = normalizeProtocolForm(Object.assign({}, this.form));
+            },
+            onSecurityChange() {
+                this.form = normalizeProtocolForm(Object.assign({}, this.form));
+            },
             normalizeForm() {
-                if (this.form.protocol === 'socks5') {
-                    this.form.method = 'aes-256-gcm';
-                } else if (this.form.protocol === 'ss') {
-                    this.form.username = '';
+                this.form = normalizeProtocolForm(Object.assign({}, this.form));
+            },
+            parseShareLink() {
+                try {
+                    this.form = parseSimpleShareLink(this.form.shareLink, this.form);
+                    this.$message.success('分享链接解析成功');
+                } catch (err) {
+                    this.$message.error(err && err.message ? err.message : '链接格式无效');
                 }
             },
             formatStatus(status) {
@@ -185,24 +594,12 @@
             editEgress(row) {
                 location.href = `${basePath}n5/simple/edit?id=${row.id}`;
             },
-            openAdvanced() {
-                location.href = `${basePath}n5/egress`;
-            },
             openRules() {
                 location.href = `${basePath}n5/simple/rules`;
             },
         },
         async mounted() {
             await this.loadEgresses();
-        },
-        watch: {
-            'form.protocol'(value) {
-                if (value === 'socks5') {
-                    this.form.method = 'aes-256-gcm';
-                } else if (value === 'ss') {
-                    this.form.username = '';
-                }
-            },
         },
     });
 </script>

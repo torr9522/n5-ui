@@ -210,6 +210,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	controller.NewPublicSubscriptionController(g)
 	n5controller.NewEgressController(g)
 	n5controller.NewEgressLabelController(g)
+	n5controller.NewSettingsController(g)
 	n5controller.NewPoolController(g)
 	n5controller.NewTrafficPolicyController(g)
 	n5controller.NewTrafficTemplateController(g)

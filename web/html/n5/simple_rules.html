@@ -13,21 +13,12 @@
                             [[ n5Enabled ? 'enabled' : 'disabled' ]]
                         </a-tag>
                         <span style="color: rgba(0, 0, 0, 0.45);">
-                            当前状态与高级设置中的 N5 Xray Extension Enable 保持一致。修改后将进入自动应用队列。
+                            当前状态由 N5设置中的“启用 N5 Xray 扩展”控制。
                         </span>
                     </a-col>
                     <a-col>
-                        <a-button type="primary"
-                                  :loading="n5StatusLoading"
-                                  :disabled="n5Enabled"
-                                  @click="updateN5Status(true)">
-                            开启
-                        </a-button>
-                        <a-button style="margin-left: 8px"
-                                  :loading="n5StatusLoading"
-                                  :disabled="!n5Enabled"
-                                  @click="updateN5Status(false)">
-                            关闭
+                        <a-button type="primary" @click="openN5Settings">
+                            打开 N5设置
                         </a-button>
                     </a-col>
                 </a-row>
@@ -236,6 +227,9 @@
             },
             openSimpleEgress() {
                 location.href = `${basePath}n5/simple`;
+            },
+            openN5Settings() {
+                location.href = `${basePath}n5/settings`;
             },
             openTrafficRules() {
                 location.href = `${basePath}n5/simple/traffic-rules`;

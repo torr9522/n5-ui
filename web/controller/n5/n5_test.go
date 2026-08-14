@@ -65,6 +65,7 @@ func newTestEngine(t *testing.T) *gin.Engine {
 	g := engine.Group("/")
 	NewEgressController(g)
 	NewEgressLabelController(g)
+	NewSettingsController(g)
 	NewPoolController(g)
 	NewTrafficPolicyController(g)
 	NewTrafficTemplateController(g)
@@ -98,7 +99,7 @@ func TestN5PageRoutesRender(t *testing.T) {
 	initControllerTestDB(t)
 	engine := newTestEngine(t)
 
-	for _, path := range []string{"/n5/egress", "/n5/egress-detail?id=1", "/n5/pools", "/n5/traffic-policy", "/n5/traffic-policy-detail?id=1", "/n5/xray-status", "/n5/config-history", "/n5/egress-test"} {
+	for _, path := range []string{"/n5/settings", "/n5/egress", "/n5/egress-detail?id=1", "/n5/pools", "/n5/traffic-policy", "/n5/traffic-policy-detail?id=1", "/n5/xray-status", "/n5/config-history", "/n5/egress-test"} {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, path, nil)
 		engine.ServeHTTP(w, req)

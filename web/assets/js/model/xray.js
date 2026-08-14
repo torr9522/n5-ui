@@ -1185,6 +1185,7 @@ class Inbound extends XrayCommonClass {
         return {
             inbound: inbound,
             remark: config.ps || '',
+            address: config.add || '',
         };
     }
 
@@ -1221,6 +1222,7 @@ class Inbound extends XrayCommonClass {
         return {
             inbound: inbound,
             remark: Inbound.decodeShareValue(parsed.fragment),
+            address: parsed.host,
             requiresServerPrivateKey: security === 'reality',
         };
     }
@@ -1249,6 +1251,7 @@ class Inbound extends XrayCommonClass {
         return {
             inbound: inbound,
             remark: Inbound.decodeShareValue(parsed.fragment),
+            address: parsed.host,
         };
     }
 
@@ -1320,6 +1323,7 @@ class Inbound extends XrayCommonClass {
         return {
             inbound: inbound,
             remark: remark,
+            address: server.host,
         };
     }
 
