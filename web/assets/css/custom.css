@@ -10,6 +10,79 @@
     display: none;
 }
 
+.n5-light-sidebar {
+    background: #fff !important;
+    box-shadow: 1px 0 0 rgba(17, 24, 39, 0.08);
+    min-height: 100vh;
+}
+
+.n5-light-sidebar .ant-layout-sider-children {
+    background: #fff;
+    min-height: 100vh;
+}
+
+.n5-sidebar-menu,
+.n5-sidebar-menu.ant-menu-light,
+.n5-light-sidebar-drawer .ant-drawer-body {
+    background: #fff;
+}
+
+.n5-sidebar-menu.ant-menu-inline,
+.n5-sidebar-menu .ant-menu-sub.ant-menu-inline {
+    border-right: 0;
+}
+
+.n5-sidebar-menu .ant-menu-item,
+.n5-sidebar-menu .ant-menu-submenu-title,
+.n5-sidebar-menu .ant-menu-item .anticon,
+.n5-sidebar-menu .ant-menu-submenu-title .anticon,
+.n5-sidebar-menu .ant-menu-submenu-arrow,
+.n5-sidebar-menu .ant-menu-submenu-arrow::before,
+.n5-sidebar-menu .ant-menu-submenu-arrow::after {
+    color: #1f2937 !important;
+}
+
+.n5-sidebar-menu .ant-menu-item:hover,
+.n5-sidebar-menu .ant-menu-submenu-title:hover {
+    color: #1d4ed8 !important;
+    background: #eff6ff !important;
+}
+
+.n5-sidebar-menu .ant-menu-item:hover .anticon,
+.n5-sidebar-menu .ant-menu-submenu-title:hover .anticon,
+.n5-sidebar-menu .ant-menu-submenu-title:hover .ant-menu-submenu-arrow,
+.n5-sidebar-menu .ant-menu-submenu-title:hover .ant-menu-submenu-arrow::before,
+.n5-sidebar-menu .ant-menu-submenu-title:hover .ant-menu-submenu-arrow::after {
+    color: #1d4ed8 !important;
+}
+
+.n5-sidebar-menu .ant-menu-item-selected,
+.n5-sidebar-menu .ant-menu-submenu-selected > .ant-menu-submenu-title,
+.n5-sidebar-menu .ant-menu-item-selected:hover,
+.n5-sidebar-menu .ant-menu-submenu-selected > .ant-menu-submenu-title:hover {
+    color: #fff !important;
+    background: #1890ff !important;
+}
+
+.n5-sidebar-menu .ant-menu-item-selected .anticon,
+.n5-sidebar-menu .ant-menu-submenu-selected > .ant-menu-submenu-title .anticon,
+.n5-sidebar-menu .ant-menu-submenu-selected > .ant-menu-submenu-title .ant-menu-submenu-arrow,
+.n5-sidebar-menu .ant-menu-submenu-selected > .ant-menu-submenu-title .ant-menu-submenu-arrow::before,
+.n5-sidebar-menu .ant-menu-submenu-selected > .ant-menu-submenu-title .ant-menu-submenu-arrow::after {
+    color: #fff !important;
+}
+
+.n5-sidebar-menu .ant-menu-sub {
+    background: #fff !important;
+}
+
+.n5-light-sidebar-drawer .ant-drawer-content,
+.n5-light-sidebar-drawer .ant-drawer-wrapper-body,
+.n5-light-sidebar-drawer .ant-drawer-header,
+.n5-light-sidebar-drawer .ant-drawer-body {
+    background: #fff;
+}
+
 .ant-card {
     border-radius: 30px;
 }
