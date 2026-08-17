@@ -18,7 +18,8 @@ import (
 type fakeRuleService struct {
 	listResult *simpleservice.SimpleRuleListResult
 	created    *simpleservice.SimpleRule
-	deletedID  int
+	updated    *simpleservice.SimpleRule
+	deletedID  string
 }
 
 func (f *fakeRuleService) ListSimpleRules() (*simpleservice.SimpleRuleListResult, error) {
@@ -28,6 +29,7 @@ func (f *fakeRuleService) ListSimpleRules() (*simpleservice.SimpleRuleListResult
 func (f *fakeRuleService) CreateSimpleRule(req *simpleservice.CreateSimpleRuleRequest) (*simpleservice.SimpleRule, error) {
 	return &simpleservice.SimpleRule{
 		Id:           21,
+		RuleId:       "simple-rule:21:YWk",
 		PolicyId:     21,
 		InboundId:    req.InboundId,
 		TrafficType:  req.TrafficType,
@@ -38,8 +40,23 @@ func (f *fakeRuleService) CreateSimpleRule(req *simpleservice.CreateSimpleRuleRe
 	}, nil
 }
 
-func (f *fakeRuleService) DeleteSimpleRule(policyId int) error {
-	f.deletedID = policyId
+func (f *fakeRuleService) UpdateSimpleRule(ruleId string, req *simpleservice.CreateSimpleRuleRequest) (*simpleservice.SimpleRule, error) {
+	f.updated = &simpleservice.SimpleRule{
+		Id:           21,
+		RuleId:       ruleId,
+		PolicyId:     21,
+		InboundId:    req.InboundId,
+		TrafficType:  req.TrafficType,
+		EgressId:     req.EgressId,
+		CustomDomain: req.CustomDomain,
+		Status:       "enabled",
+		Enabled:      true,
+	}
+	return f.updated, nil
+}
+
+func (f *fakeRuleService) DeleteSimpleRule(ruleId string) error {
+	f.deletedID = ruleId
 	return nil
 }
 
@@ -57,14 +74,14 @@ type fakeRuleSettingService struct {
 
 func (f *fakeRuleSettingService) GetAllSetting() (*entity.AllSetting, error) {
 	return &entity.AllSetting{
-		WebListen:               "",
-		WebPort:                 54321,
-		WebCertFile:             "",
-		WebKeyFile:              "",
-		WebBasePath:             "/",
-		XrayTemplateConfig:      `{"log":{},"inbounds":[],"outbounds":[]}`,
-		N5XrayExtensionEnable:   f.enabled,
-		TimeLocation:            "Asia/Shanghai",
+		WebListen:             "",
+		WebPort:               54321,
+		WebCertFile:           "",
+		WebKeyFile:            "",
+		WebBasePath:           "/",
+		XrayTemplateConfig:    `{"log":{},"inbounds":[],"outbounds":[]}`,
+		N5XrayExtensionEnable: f.enabled,
+		TimeLocation:          "Asia/Shanghai",
 	}, nil
 }
 
@@ -119,6 +136,7 @@ func TestSimpleRuleAPIResponses(t *testing.T) {
 			Rules: []*simpleservice.SimpleRule{
 				{
 					Id:          1,
+					RuleId:      "simple-rule:1:YWxs",
 					PolicyId:    1,
 					InboundId:   7,
 					InboundName: "simple-inbound",
@@ -194,7 +212,22 @@ func TestSimpleRuleAPIResponses(t *testing.T) {
 		t.Fatalf("unexpected restart count after status update: %d", restart.calls)
 	}
 
-	delBody := bytes.NewBufferString(`{"id":21}`)
+	updateBody := bytes.NewBufferString(`{"ruleId":"simple-rule:21:YWk","inboundId":7,"trafficType":"ai","egressId":10}`)
+	updateReq, _ := http.NewRequest(http.MethodPost, "/n5/api/simple/rule/update", updateBody)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp := httptest.NewRecorder()
+	engine.ServeHTTP(updateResp, updateReq)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("unexpected update status: %d", updateResp.Code)
+	}
+	if svc.updated == nil || svc.updated.RuleId != "simple-rule:21:YWk" {
+		t.Fatalf("unexpected updated rule: %#v", svc.updated)
+	}
+	if restart.calls != 3 {
+		t.Fatalf("unexpected restart count after update: %d", restart.calls)
+	}
+
+	delBody := bytes.NewBufferString(`{"ruleId":"simple-rule:21:YWk"}`)
 	delReq, _ := http.NewRequest(http.MethodPost, "/n5/api/simple/rule/delete", delBody)
 	delReq.Header.Set("Content-Type", "application/json")
 	delResp := httptest.NewRecorder()
@@ -202,10 +235,10 @@ func TestSimpleRuleAPIResponses(t *testing.T) {
 	if delResp.Code != http.StatusOK {
 		t.Fatalf("unexpected delete status: %d", delResp.Code)
 	}
-	if svc.deletedID != 21 {
-		t.Fatalf("unexpected deleted id: %d", svc.deletedID)
+	if svc.deletedID != "simple-rule:21:YWk" {
+		t.Fatalf("unexpected deleted id: %s", svc.deletedID)
 	}
-	if restart.calls != 3 {
+	if restart.calls != 4 {
 		t.Fatalf("unexpected restart count after delete: %d", restart.calls)
 	}
 }

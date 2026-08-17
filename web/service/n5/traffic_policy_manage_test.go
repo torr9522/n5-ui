@@ -1,6 +1,7 @@
 package n5
 
 import (
+	"strings"
 	"testing"
 	"x-ui/database"
 	legacyModel "x-ui/database/model"
@@ -342,5 +343,29 @@ func TestTrafficTemplateCreatedPolicyCanBeEdited(t *testing.T) {
 	}
 	if updatedRule.MatchMode != domainModeKeyword || updatedRule.MatchValue != "openai" {
 		t.Fatalf("unexpected updated template rule: %#v", updatedRule)
+	}
+}
+
+func TestTrafficPolicyServiceRejectsRemarkTransitionForSimpleManagedPolicy(t *testing.T) {
+	initTestDB(t)
+
+	policySvc := &TrafficPolicyService{}
+	policy, err := policySvc.Create(&n5model.TrafficPolicy{
+		Name:    "simple-managed",
+		Remark:  "n5-simple-exec|eyJ2ZXJzaW9uIjoxLCJpdGVtcyI6W119",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create policy failed: %v", err)
+	}
+
+	_, err = policySvc.UpdatePolicy(&n5model.TrafficPolicy{
+		Id:      policy.Id,
+		Name:    policy.Name,
+		Remark:  "ordinary-remark",
+		Enabled: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "Simple 出口规则管理") {
+		t.Fatalf("unexpected update error: %v", err)
 	}
 }

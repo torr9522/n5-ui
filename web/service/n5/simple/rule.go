@@ -1,19 +1,28 @@
 package simple
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"io"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"x-ui/database/model"
 	n5model "x-ui/database/model/n5"
+	"x-ui/logger"
 	"x-ui/util/common"
 	coreservice "x-ui/web/service"
 	n5service "x-ui/web/service/n5"
 )
 
 const (
-	simpleRuleRemarkPrefix = "n5-simple|"
+	simpleRuleRemarkPrefix        = "n5-simple|"
+	simpleExecutionRemarkPrefix   = "n5-simple-exec|"
+	simpleExecutionRemarkVersion  = 1
+	simpleExecutionRemarkMaxBytes = 128 * 1024
+	simpleRuleIDPrefix            = "simple-rule:"
+	legacySimpleRuleIDPrefix      = "legacy-simple-rule:"
 
 	simpleTrafficAll          = "all"
 	simpleTrafficGroup        = "group"
@@ -38,6 +47,8 @@ type trafficPolicyManager interface {
 	DisablePolicy(id int) (*n5model.TrafficPolicy, error)
 	AddRule(rule *n5model.TrafficPolicyRule) (*n5model.TrafficPolicyRule, error)
 	ListRules(policyId int) ([]*n5model.TrafficPolicyRule, error)
+	UpdateRule(rule *n5model.TrafficPolicyRule) (*n5model.TrafficPolicyRule, error)
+	DeleteRule(ruleId int) error
 	ListBindings() ([]*n5model.TrafficPolicyBinding, error)
 	BindInboundPolicy(inboundId int, policyId int) (*n5model.TrafficPolicyBinding, error)
 }
@@ -48,12 +59,14 @@ type trafficTemplateManager interface {
 }
 
 type trafficRuleGroupManager interface {
+	ListGroups() ([]*TrafficRuleGroup, error)
 	ListGroupOptions() ([]*TrafficRuleGroupOption, error)
 	GetGroup(id int) (*TrafficRuleGroup, error)
 }
 
 type SimpleRule struct {
 	Id              int    `json:"id"`
+	RuleId          string `json:"ruleId"`
 	PolicyId        int    `json:"policyId"`
 	InboundId       int    `json:"inboundId"`
 	InboundName     string `json:"inboundName"`
@@ -112,6 +125,44 @@ type CreateSimpleRuleRequest struct {
 	GroupId      int    `json:"groupId" form:"groupId"`
 	EgressId     int    `json:"egressId" form:"egressId"`
 	CustomDomain string `json:"customDomain" form:"customDomain"`
+}
+
+type simpleExecutionRemark struct {
+	Version int                    `json:"version"`
+	Items   []*simpleExecutionItem `json:"items"`
+}
+
+type simpleExecutionItem struct {
+	TrafficType  string `json:"trafficType"`
+	GroupId      int    `json:"groupId,omitempty"`
+	GroupName    string `json:"groupName,omitempty"`
+	GroupType    string `json:"groupType,omitempty"`
+	CustomDomain string `json:"customDomain,omitempty"`
+	RuleIDs      []int  `json:"ruleIds,omitempty"`
+}
+
+type simpleExecutionRemarkStats struct {
+	RawJSONBytes     int
+	Base64Bytes      int
+	TotalRemarkBytes int
+}
+
+type simpleRuleRemark struct {
+	TrafficType  string
+	GroupId      int
+	GroupName    string
+	GroupType    string
+	CustomDomain string
+}
+
+type simplePolicyContext struct {
+	Policy     *n5model.TrafficPolicy
+	Binding    *n5model.TrafficPolicyBinding
+	Inbound    *model.Inbound
+	Rules      []*n5model.TrafficPolicyRule
+	RuleMap    map[int]*n5model.TrafficPolicyRule
+	ExecRemark *simpleExecutionRemark
+	LegacyMeta *simpleRuleRemark
 }
 
 type RuleService struct {
@@ -193,6 +244,7 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 	for _, binding := range bindings {
 		bindingByPolicy[binding.PolicyId] = binding
 	}
+
 	inboundByID := make(map[int]*model.Inbound, len(inbounds))
 	inboundOptions := make([]*SimpleInboundOption, 0, len(inbounds))
 	for _, inbound := range inbounds {
@@ -204,6 +256,7 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 			Enabled: inbound.Enable,
 		})
 	}
+
 	egressByID := make(map[int]*n5model.Egress, len(egresses))
 	egressOptions := make([]*SimpleRuleEgressOption, 0, len(egresses))
 	for _, egress := range egresses {
@@ -222,12 +275,17 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 		})
 	}
 
+	groupByID := make(map[int]*TrafficRuleGroupOption, len(groups))
+	groupByType := make(map[string]*TrafficRuleGroupOption, len(groups))
+	for _, group := range groups {
+		groupByID[group.Id] = group
+		if group.GroupType != "" {
+			groupByType[group.GroupType] = group
+		}
+	}
+
 	items := make([]*SimpleRule, 0)
 	for _, policy := range policies {
-		meta, ok := parseSimpleRuleRemark(policy.Remark)
-		if !ok {
-			continue
-		}
 		binding := bindingByPolicy[policy.Id]
 		if binding == nil {
 			continue
@@ -236,62 +294,65 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 		if inbound == nil {
 			continue
 		}
+
 		rules, err := s.getPolicyService().ListRules(policy.Id)
 		if err != nil {
 			return nil, err
 		}
+		ruleMap := buildRuleMap(rules)
+		enabled := policy.Enabled && binding.Enabled
 
-		egressID := 0
-		if len(rules) > 0 {
-			egressID = rules[0].TargetId
-		} else if strings.EqualFold(policy.DefaultTargetType, "egress") {
-			egressID = policy.DefaultTargetId
-		}
-		egress := egressByID[egressID]
-		if egress == nil {
+		if isNewSimpleExecutionRemark(policy.Remark) {
+			execRemark, err := decodeSimpleExecutionRemark(policy.Remark)
+			if err != nil {
+				logger.Warningf("skip corrupted simple exec policy in list, policy=%d err=%v", policy.Id, err)
+				continue
+			}
+			for _, item := range execRemark.Items {
+				row, ok := buildSimpleRuleFromExecutionItem(policy, binding, inbound, enabled, item, ruleMap, egressByID)
+				if !ok {
+					continue
+				}
+				items = append(items, row)
+			}
+			if strings.EqualFold(policy.DefaultTargetType, "egress") && policy.DefaultTargetId > 0 {
+				egress := egressByID[policy.DefaultTargetId]
+				if egress != nil {
+					items = append(items, buildDefaultSimpleRule(policy, binding, inbound, enabled, egress))
+				}
+			}
 			continue
 		}
 
-		enabled := policy.Enabled && binding.Enabled
-		status := "disabled"
-		if enabled {
-			status = "enabled"
+		if isLegacySimpleRemark(policy.Remark) {
+			meta, ok := parseSimpleRuleRemark(policy.Remark)
+			if !ok {
+				logger.Warningf("skip corrupted legacy simple policy in list, policy=%d", policy.Id)
+				continue
+			}
+			row, ok := buildLegacySimpleRule(policy, binding, inbound, enabled, meta, rules, ruleMap, egressByID, groupByID, groupByType)
+			if !ok {
+				continue
+			}
+			items = append(items, row)
+			continue
 		}
-		trafficLabel := simpleTrafficLabel(meta.TrafficType)
-		if meta.TrafficType == simpleTrafficGroup && strings.TrimSpace(meta.GroupName) != "" {
-			trafficLabel = meta.GroupName
-		}
-		items = append(items, &SimpleRule{
-			Id:              policy.Id,
-			PolicyId:        policy.Id,
-			InboundId:       inbound.Id,
-			InboundName:     simpleInboundName(inbound),
-			InboundTag:      inbound.Tag,
-			TrafficType:     meta.TrafficType,
-			TrafficLabel:    trafficLabel,
-			GroupId:         meta.GroupId,
-			GroupName:       meta.GroupName,
-			GroupType:       meta.GroupType,
-			CustomDomain:    meta.CustomDomain,
-			EgressId:        egress.Id,
-			EgressName:      egress.Name,
-			EgressTag:       egress.Tag,
-			Status:          status,
-			Enabled:         enabled,
-			RuleCount:       len(rules),
-			CreatedAt:       policy.CreatedAt,
-			UpdatedAt:       policy.UpdatedAt,
-			PolicyName:      policy.Name,
-			PolicyRemark:    policy.Remark,
-			DefaultTargetId: policy.DefaultTargetId,
-		})
 	}
 
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].InboundId == items[j].InboundId {
+		if items[i].InboundId != items[j].InboundId {
+			return items[i].InboundId < items[j].InboundId
+		}
+		if items[i].TrafficType == simpleTrafficAll && items[j].TrafficType != simpleTrafficAll {
+			return false
+		}
+		if items[i].TrafficType != simpleTrafficAll && items[j].TrafficType == simpleTrafficAll {
+			return true
+		}
+		if items[i].PolicyId != items[j].PolicyId {
 			return items[i].PolicyId < items[j].PolicyId
 		}
-		return items[i].InboundId < items[j].InboundId
+		return items[i].RuleId < items[j].RuleId
 	})
 
 	return &SimpleRuleListResult{
@@ -323,204 +384,643 @@ func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 		return nil, err
 	}
 
-	if err := s.ensureInboundAvailableForSimpleRule(inbound.Id); err != nil {
+	ctx, err := s.ensureSimpleExecutionPolicy(inbound)
+	if err != nil {
 		return nil, err
 	}
 
-	if req.GroupId > 0 {
-		return s.createGroupSnapshotRule(inbound, egress, req.GroupId)
+	if trafficType == simpleTrafficAll {
+		if strings.EqualFold(ctx.Policy.DefaultTargetType, "egress") && ctx.Policy.DefaultTargetId > 0 {
+			return nil, common.NewError("该入站已存在默认出口，请编辑现有规则")
+		}
+		updated, err := s.getPolicyService().UpdatePolicy(&n5model.TrafficPolicy{
+			Id:                ctx.Policy.Id,
+			Name:              ctx.Policy.Name,
+			Remark:            ctx.Policy.Remark,
+			Enabled:           ctx.Policy.Enabled,
+			DefaultTargetType: "egress",
+			DefaultTargetId:   egress.Id,
+		})
+		if err != nil {
+			return nil, err
+		}
+		ctx.Policy = updated
+		return buildDefaultSimpleRule(ctx.Policy, ctx.Binding, inbound, ctx.Policy.Enabled && ctx.Binding.Enabled, egress), nil
 	}
 
+	var item *simpleExecutionItem
 	switch trafficType {
-	case simpleTrafficAll:
-		return s.createAllRule(inbound, egress)
-	case simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming:
-		return s.createTemplateRule(inbound, egress, trafficType)
+	case simpleTrafficGroup:
+		group, err := s.getGroupService().GetGroup(req.GroupId)
+		if err != nil {
+			return nil, err
+		}
+		if group == nil || group.Id <= 0 {
+			return nil, common.NewError("traffic rule group not found")
+		}
+		if !group.Enabled {
+			return nil, common.NewError("traffic rule group is disabled")
+		}
+		item, err = s.buildExecutionItemFromRequest(req, trafficType, group)
+		if err != nil {
+			return nil, err
+		}
+		if findExecutionItemByKey(ctx.ExecRemark, simpleExecutionItemKey(item)) != nil {
+			return nil, common.NewError("该入站已存在该分流规则，请编辑已有规则")
+		}
+		item.GroupId = group.Id
+		item.GroupName = group.Name
+		item.GroupType = group.GroupType
+		item.RuleIDs, err = s.appendGroupSnapshotRules(ctx.Policy.Id, egress.Id, group)
+		if err != nil {
+			return nil, err
+		}
 	case simpleTrafficCustomDomain:
-		return s.createCustomDomainRule(inbound, egress, req.CustomDomain)
+		item, err = s.buildExecutionItemFromRequest(req, trafficType, nil)
+		if err != nil {
+			return nil, err
+		}
+		if findExecutionItemByKey(ctx.ExecRemark, simpleExecutionItemKey(item)) != nil {
+			return nil, common.NewError("该入站已存在该分流规则，请编辑已有规则")
+		}
+		matchMode, matchValue, displayValue, err := parseCustomDomainRule(req.CustomDomain)
+		if err != nil {
+			return nil, err
+		}
+		rule, err := s.getPolicyService().AddRule(&n5model.TrafficPolicyRule{
+			PolicyId:   ctx.Policy.Id,
+			RuleType:   "domain",
+			MatchMode:  matchMode,
+			MatchValue: matchValue,
+			TargetType: "egress",
+			TargetId:   egress.Id,
+			Enabled:    true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		item.CustomDomain = displayValue
+		item.RuleIDs = []int{rule.Id}
+	case simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming:
+		group, err := s.findBuiltinGroupByType(trafficType)
+		if err != nil {
+			return nil, err
+		}
+		if group == nil || group.Id <= 0 {
+			return nil, common.NewError("traffic rule group not found")
+		}
+		item, err = s.buildExecutionItemFromRequest(req, trafficType, group)
+		if err != nil {
+			return nil, err
+		}
+		if findExecutionItemByKey(ctx.ExecRemark, simpleExecutionItemKey(item)) != nil {
+			return nil, common.NewError("该入站已存在该分流规则，请编辑已有规则")
+		}
+		item.TrafficType = simpleTrafficGroup
+		item.GroupId = group.Id
+		item.GroupName = group.Name
+		item.GroupType = group.GroupType
+		item.RuleIDs, err = s.appendGroupSnapshotRules(ctx.Policy.Id, egress.Id, group)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, common.NewError("unsupported traffic type")
 	}
+
+	ctx.ExecRemark.Items = append(ctx.ExecRemark.Items, item)
+	if err := s.saveExecutionRemark(ctx.Policy, ctx.ExecRemark); err != nil {
+		return nil, err
+	}
+	ctx.Rules, _ = s.getPolicyService().ListRules(ctx.Policy.Id)
+	ctx.RuleMap = buildRuleMap(ctx.Rules)
+	row, _ := buildSimpleRuleFromExecutionItem(ctx.Policy, ctx.Binding, inbound, ctx.Policy.Enabled && ctx.Binding.Enabled, item, ctx.RuleMap, map[int]*n5model.Egress{
+		egress.Id: egress,
+	})
+	return row, nil
 }
 
-func (s *RuleService) DeleteSimpleRule(policyId int) error {
-	if policyId <= 0 {
-		return common.NewError("invalid simple rule id")
+func (s *RuleService) UpdateSimpleRule(ruleID string, req *CreateSimpleRuleRequest) (*SimpleRule, error) {
+	if strings.TrimSpace(ruleID) == "" {
+		return nil, common.NewError("rule id is required")
 	}
-	policy, err := s.getPolicyService().GetPolicy(policyId)
+	if req == nil {
+		return nil, common.NewError("simple rule request is nil")
+	}
+	if req.GroupId > 0 {
+		req.TrafficType = simpleTrafficGroup
+	}
+	egress, err := s.getEgressService().Get(req.EgressId)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, item, legacy, err := s.loadSimpleRuleSelection(ruleID)
+	if err != nil {
+		return nil, err
+	}
+	if req.InboundId > 0 && req.InboundId != ctx.Inbound.Id {
+		return nil, common.NewError("editing rule inbound is not supported")
+	}
+
+	if legacy {
+		return s.updateLegacySimpleRule(ctx, req, egress)
+	}
+
+	currentGroup, err := s.resolveExecutionGroup(item)
+	if err != nil {
+		return nil, err
+	}
+	requestItem, err := s.buildExecutionItemFromRequest(req, normalizeSimpleTrafficType(req.TrafficType), currentGroup)
+	if err != nil {
+		return nil, err
+	}
+	if simpleExecutionItemKey(item) != simpleExecutionItemKey(requestItem) {
+		return nil, common.NewError("editing rule identity is not supported")
+	}
+
+	if item.TrafficType == simpleTrafficAll {
+		policy, err := s.getPolicyService().UpdatePolicy(&n5model.TrafficPolicy{
+			Id:                ctx.Policy.Id,
+			Name:              ctx.Policy.Name,
+			Remark:            ctx.Policy.Remark,
+			Enabled:           ctx.Policy.Enabled,
+			DefaultTargetType: "egress",
+			DefaultTargetId:   egress.Id,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return buildDefaultSimpleRule(policy, ctx.Binding, ctx.Inbound, policy.Enabled && ctx.Binding.Enabled, egress), nil
+	}
+
+	itemRules, err := getExecutionItemRules(item, ctx.RuleMap)
+	if err != nil {
+		return nil, err
+	}
+	for _, rule := range itemRules {
+		if _, err := s.getPolicyService().UpdateRule(&n5model.TrafficPolicyRule{
+			Id:         rule.Id,
+			RuleType:   rule.RuleType,
+			MatchMode:  rule.MatchMode,
+			MatchValue: rule.MatchValue,
+			TargetType: "egress",
+			TargetId:   egress.Id,
+			SortOrder:  rule.SortOrder,
+			Enabled:    rule.Enabled,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	ctx.Rules, _ = s.getPolicyService().ListRules(ctx.Policy.Id)
+	ctx.RuleMap = buildRuleMap(ctx.Rules)
+	row, _ := buildSimpleRuleFromExecutionItem(ctx.Policy, ctx.Binding, ctx.Inbound, ctx.Policy.Enabled && ctx.Binding.Enabled, item, ctx.RuleMap, map[int]*n5model.Egress{
+		egress.Id: egress,
+	})
+	return row, nil
+}
+
+func (s *RuleService) DeleteSimpleRule(ruleID string) error {
+	if strings.TrimSpace(ruleID) == "" {
+		return common.NewError("rule id is required")
+	}
+
+	ctx, item, legacy, err := s.loadSimpleRuleSelection(ruleID)
 	if err != nil {
 		return err
 	}
-	if _, ok := parseSimpleRuleRemark(policy.Remark); !ok {
-		return common.NewError("simple rule not found")
+	if legacy {
+		return s.getPolicyService().DeletePolicy(ctx.Policy.Id)
 	}
-	return s.getPolicyService().DeletePolicy(policyId)
+
+	if item.TrafficType == simpleTrafficAll {
+		if _, err := s.getPolicyService().UpdatePolicy(&n5model.TrafficPolicy{
+			Id:                ctx.Policy.Id,
+			Name:              ctx.Policy.Name,
+			Remark:            ctx.Policy.Remark,
+			Enabled:           ctx.Policy.Enabled,
+			DefaultTargetType: "",
+			DefaultTargetId:   0,
+		}); err != nil {
+			return err
+		}
+		return s.cleanupEmptyExecutionPolicy(ctx.Policy.Id)
+	}
+
+	itemRules, err := getExecutionItemRules(item, ctx.RuleMap)
+	if err != nil {
+		return err
+	}
+	for _, rule := range itemRules {
+		if err := s.getPolicyService().DeleteRule(rule.Id); err != nil {
+			return err
+		}
+	}
+	removeExecutionItem(ctx.ExecRemark, simpleExecutionItemKey(item))
+	if len(ctx.ExecRemark.Items) == 0 {
+		if err := s.saveExecutionRemark(ctx.Policy, ctx.ExecRemark); err != nil {
+			return err
+		}
+		return s.cleanupEmptyExecutionPolicy(ctx.Policy.Id)
+	}
+	if err := s.saveExecutionRemark(ctx.Policy, ctx.ExecRemark); err != nil {
+		return err
+	}
+	return s.cleanupEmptyExecutionPolicy(ctx.Policy.Id)
 }
 
-func (s *RuleService) createAllRule(inbound *model.Inbound, egress *n5model.Egress) (*SimpleRule, error) {
-	policy, err := s.getPolicyService().Create(&n5model.TrafficPolicy{
-		Name:              simplePolicyName(inbound, simpleTrafficAll),
-		Remark:            buildSimpleRuleRemark(simpleTrafficAll, ""),
-		Enabled:           true,
-		DefaultTargetType: "egress",
-		DefaultTargetId:   egress.Id,
-	})
-	if err != nil {
-		return nil, err
-	}
-	binding, err := s.getPolicyService().BindInboundPolicy(inbound.Id, policy.Id)
-	if err != nil {
-		_ = s.getPolicyService().DeletePolicy(policy.Id)
-		return nil, err
-	}
-	return buildSimpleRule(policy, nil, binding, inbound, egress, simpleTrafficAll, ""), nil
-}
-
-func (s *RuleService) createTemplateRule(inbound *model.Inbound, egress *n5model.Egress, trafficType string) (*SimpleRule, error) {
-	result, err := s.getTemplateService().Create(&n5service.TrafficTemplateCreateRequest{
-		TemplateName: trafficType,
-		PolicyName:   simplePolicyName(inbound, trafficType),
-		InboundId:    inbound.Id,
-		TargetType:   "egress",
-		TargetId:     egress.Id,
-	})
-	if err != nil {
-		return nil, err
-	}
-	policy, err := s.getPolicyService().UpdatePolicy(&n5model.TrafficPolicy{
-		Id:                result.Policy.Id,
-		Name:              result.Policy.Name,
-		Remark:            buildSimpleRuleRemark(trafficType, ""),
-		Enabled:           result.Policy.Enabled,
-		DefaultTargetType: "",
-		DefaultTargetId:   0,
-	})
-	if err != nil {
-		_ = s.getPolicyService().DeletePolicy(result.Policy.Id)
-		return nil, err
-	}
-	return buildSimpleRule(policy, result.Rules, result.Binding, inbound, egress, trafficType, ""), nil
-}
-
-func (s *RuleService) createCustomDomainRule(inbound *model.Inbound, egress *n5model.Egress, customDomain string) (*SimpleRule, error) {
-	matchMode, matchValue, displayValue, err := parseCustomDomainRule(customDomain)
-	if err != nil {
-		return nil, err
-	}
-
-	policy, err := s.getPolicyService().Create(&n5model.TrafficPolicy{
-		Name:    simplePolicyName(inbound, simpleTrafficCustomDomain),
-		Remark:  buildSimpleRuleRemark(simpleTrafficCustomDomain, displayValue),
-		Enabled: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	rule, err := s.getPolicyService().AddRule(&n5model.TrafficPolicyRule{
-		PolicyId:   policy.Id,
-		RuleType:   "domain",
-		MatchMode:  matchMode,
-		MatchValue: matchValue,
-		TargetType: "egress",
-		TargetId:   egress.Id,
-		Enabled:    true,
-	})
-	if err != nil {
-		_ = s.getPolicyService().DeletePolicy(policy.Id)
-		return nil, err
-	}
-	binding, err := s.getPolicyService().BindInboundPolicy(inbound.Id, policy.Id)
-	if err != nil {
-		_ = s.getPolicyService().DeletePolicy(policy.Id)
-		return nil, err
-	}
-	return buildSimpleRule(policy, []*n5model.TrafficPolicyRule{rule}, binding, inbound, egress, simpleTrafficCustomDomain, displayValue), nil
-}
-
-func (s *RuleService) createGroupSnapshotRule(inbound *model.Inbound, egress *n5model.Egress, groupId int) (*SimpleRule, error) {
-	group, err := s.getGroupService().GetGroup(groupId)
-	if err != nil {
-		return nil, err
-	}
+func (s *RuleService) appendGroupSnapshotRules(policyId int, egressId int, group *TrafficRuleGroup) ([]int, error) {
 	if group == nil || group.Id <= 0 {
 		return nil, common.NewError("traffic rule group not found")
-	}
-	if !group.Enabled {
-		return nil, common.NewError("traffic rule group is disabled")
 	}
 	if len(group.Rules) == 0 {
 		return nil, common.NewError("traffic rule group has no rules")
 	}
-
-	policy, err := s.getPolicyService().Create(&n5model.TrafficPolicy{
-		Name:    simpleGroupPolicyName(inbound, group.Name),
-		Remark:  buildSimpleGroupSnapshotRemark(group),
-		Enabled: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	createdRules := make([]*n5model.TrafficPolicyRule, 0, len(group.Rules))
+	created := make([]int, 0, len(group.Rules))
 	for _, item := range group.Rules {
 		if item == nil || !item.Enabled {
 			continue
 		}
 		rule, err := s.getPolicyService().AddRule(&n5model.TrafficPolicyRule{
-			PolicyId:   policy.Id,
+			PolicyId:   policyId,
 			RuleType:   item.RuleType,
 			MatchMode:  item.MatchMode,
 			MatchValue: item.MatchValue,
 			TargetType: "egress",
-			TargetId:   egress.Id,
-			SortOrder:  item.SortOrder,
+			TargetId:   egressId,
 			Enabled:    true,
 		})
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, rule.Id)
+	}
+	if len(created) == 0 {
+		return nil, common.NewError("traffic rule group has no enabled rules")
+	}
+	return created, nil
+}
+
+func (s *RuleService) buildExecutionItemFromRequest(req *CreateSimpleRuleRequest, trafficType string, group *TrafficRuleGroup) (*simpleExecutionItem, error) {
+	item := &simpleExecutionItem{TrafficType: normalizeSimpleTrafficType(trafficType)}
+	switch item.TrafficType {
+	case simpleTrafficAll:
+		return item, nil
+	case simpleTrafficGroup:
+		if req.GroupId <= 0 {
+			return nil, common.NewError("traffic rule group is required")
+		}
+		item.GroupId = req.GroupId
+		if group != nil {
+			item.GroupName = group.Name
+			item.GroupType = group.GroupType
+		}
+		return item, nil
+	case simpleTrafficCustomDomain:
+		_, _, displayValue, err := parseCustomDomainRule(req.CustomDomain)
+		if err != nil {
+			return nil, err
+		}
+		item.CustomDomain = displayValue
+		return item, nil
+	case simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming:
+		item.TrafficType = simpleTrafficGroup
+		if group != nil {
+			item.GroupId = group.Id
+			item.GroupName = group.Name
+			item.GroupType = group.GroupType
+		} else {
+			item.GroupType = normalizeSimpleTrafficType(trafficType)
+		}
+		return item, nil
+	default:
+		return nil, common.NewError("unsupported traffic type")
+	}
+}
+
+func (s *RuleService) resolveExecutionGroup(item *simpleExecutionItem) (*TrafficRuleGroup, error) {
+	if item == nil || item.TrafficType != simpleTrafficGroup {
+		return nil, nil
+	}
+	if item.GroupId > 0 {
+		group, err := s.getGroupService().GetGroup(item.GroupId)
+		if err == nil && group != nil && group.Id > 0 {
+			return group, nil
+		}
+	}
+	if groupType := normalizeSimpleGroupType(item.GroupType); groupType != "" {
+		return s.findBuiltinGroupByType(groupType)
+	}
+	return nil, nil
+}
+
+func (s *RuleService) findBuiltinGroupByType(groupType string) (*TrafficRuleGroup, error) {
+	groups, err := s.getGroupService().ListGroups()
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		if group != nil && group.GroupType == groupType {
+			return s.getGroupService().GetGroup(group.Id)
+		}
+	}
+	return nil, common.NewError("traffic rule group not found")
+}
+
+func (s *RuleService) ensureSimpleExecutionPolicy(inbound *model.Inbound) (*simplePolicyContext, error) {
+	if inbound == nil || inbound.Id <= 0 {
+		return nil, common.NewError("invalid inbound")
+	}
+	ctx, err := s.loadSimplePolicyContextByInbound(inbound.Id)
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		remarkValue, _, err := buildSimpleExecutionRemark(&simpleExecutionRemark{Version: simpleExecutionRemarkVersion})
+		if err != nil {
+			return nil, err
+		}
+		policy, err := s.getPolicyService().Create(&n5model.TrafficPolicy{
+			Name:    simpleExecutionPolicyName(inbound),
+			Remark:  remarkValue,
+			Enabled: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		binding, err := s.getPolicyService().BindInboundPolicy(inbound.Id, policy.Id)
 		if err != nil {
 			_ = s.getPolicyService().DeletePolicy(policy.Id)
 			return nil, err
 		}
-		createdRules = append(createdRules, rule)
+		return &simplePolicyContext{
+			Policy:     policy,
+			Binding:    binding,
+			Inbound:    inbound,
+			Rules:      []*n5model.TrafficPolicyRule{},
+			RuleMap:    map[int]*n5model.TrafficPolicyRule{},
+			ExecRemark: &simpleExecutionRemark{Version: simpleExecutionRemarkVersion},
+		}, nil
 	}
-	if len(createdRules) == 0 {
-		_ = s.getPolicyService().DeletePolicy(policy.Id)
-		return nil, common.NewError("traffic rule group has no enabled rules")
+	if ctx.ExecRemark != nil {
+		return ctx, nil
 	}
 
-	binding, err := s.getPolicyService().BindInboundPolicy(inbound.Id, policy.Id)
+	execRemark, err := s.buildExecutionRemarkFromLegacy(ctx.LegacyMeta, ctx.Rules)
 	if err != nil {
-		_ = s.getPolicyService().DeletePolicy(policy.Id)
 		return nil, err
 	}
-
-	item := buildSimpleRule(policy, createdRules, binding, inbound, egress, simpleTrafficGroup, "")
-	item.GroupId = group.Id
-	item.GroupName = group.Name
-	item.GroupType = group.GroupType
-	item.TrafficLabel = group.Name
-	return item, nil
+	remarkValue, _, err := buildSimpleExecutionRemark(execRemark)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := s.getPolicyService().UpdatePolicy(&n5model.TrafficPolicy{
+		Id:                ctx.Policy.Id,
+		Name:              simpleExecutionPolicyName(inbound),
+		Remark:            remarkValue,
+		Enabled:           ctx.Policy.Enabled,
+		DefaultTargetType: ctx.Policy.DefaultTargetType,
+		DefaultTargetId:   ctx.Policy.DefaultTargetId,
+	})
+	if err != nil {
+		return nil, err
+	}
+	ctx.Policy = policy
+	ctx.ExecRemark = execRemark
+	ctx.LegacyMeta = nil
+	return ctx, nil
 }
 
-func (s *RuleService) ensureInboundAvailableForSimpleRule(inboundId int) error {
-	bindings, err := s.getPolicyService().ListBindings()
+func (s *RuleService) buildExecutionRemarkFromLegacy(meta *simpleRuleRemark, rules []*n5model.TrafficPolicyRule) (*simpleExecutionRemark, error) {
+	remark := &simpleExecutionRemark{
+		Version: simpleExecutionRemarkVersion,
+		Items:   []*simpleExecutionItem{},
+	}
+	if meta == nil || meta.TrafficType == simpleTrafficAll {
+		return remark, nil
+	}
+
+	item := &simpleExecutionItem{
+		TrafficType:  meta.TrafficType,
+		GroupId:      meta.GroupId,
+		GroupName:    meta.GroupName,
+		GroupType:    meta.GroupType,
+		CustomDomain: meta.CustomDomain,
+		RuleIDs:      collectRuleIDs(rules),
+	}
+	switch meta.TrafficType {
+	case simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming:
+		item.TrafficType = simpleTrafficGroup
+		item.GroupType = meta.TrafficType
+		if item.GroupName == "" {
+			item.GroupName = simpleTrafficLabel(meta.TrafficType)
+		}
+	}
+	remark.Items = append(remark.Items, item)
+	return remark, nil
+}
+
+func (s *RuleService) saveExecutionRemark(policy *n5model.TrafficPolicy, remark *simpleExecutionRemark) error {
+	if policy == nil || policy.Id <= 0 {
+		return common.NewError("invalid policy")
+	}
+	if remark == nil {
+		remark = &simpleExecutionRemark{Version: simpleExecutionRemarkVersion}
+	}
+	remarkValue, _, err := buildSimpleExecutionRemark(remark)
 	if err != nil {
 		return err
+	}
+	updated, err := s.getPolicyService().UpdatePolicy(&n5model.TrafficPolicy{
+		Id:                policy.Id,
+		Name:              policy.Name,
+		Remark:            remarkValue,
+		Enabled:           policy.Enabled,
+		DefaultTargetType: policy.DefaultTargetType,
+		DefaultTargetId:   policy.DefaultTargetId,
+	})
+	if err != nil {
+		return err
+	}
+	policy.Remark = updated.Remark
+	policy.UpdatedAt = updated.UpdatedAt
+	return nil
+}
+
+func (s *RuleService) loadSimplePolicyContextByInbound(inboundId int) (*simplePolicyContext, error) {
+	if inboundId <= 0 {
+		return nil, common.NewError("invalid inbound id")
+	}
+	bindings, err := s.getPolicyService().ListBindings()
+	if err != nil {
+		return nil, err
 	}
 	for _, binding := range bindings {
 		if binding.InboundId != inboundId {
 			continue
 		}
-		policy, err := s.getPolicyService().GetPolicy(binding.PolicyId)
-		if err != nil {
-			return err
-		}
-		if _, ok := parseSimpleRuleRemark(policy.Remark); ok {
-			return s.getPolicyService().DeletePolicy(policy.Id)
-		}
-		return common.NewError("inbound already bound to advanced traffic policy")
+		return s.loadSimplePolicyContextByPolicyID(binding.PolicyId)
 	}
-	return nil
+	return nil, nil
+}
+
+func (s *RuleService) loadSimplePolicyContextByPolicyID(policyId int) (*simplePolicyContext, error) {
+	if policyId <= 0 {
+		return nil, common.NewError("invalid policy id")
+	}
+	policy, err := s.getPolicyService().GetPolicy(policyId)
+	if err != nil {
+		return nil, err
+	}
+	binding, err := s.findBindingByPolicyID(policyId)
+	if err != nil {
+		return nil, err
+	}
+	inbound, err := s.getInboundService().GetInbound(binding.InboundId)
+	if err != nil {
+		return nil, err
+	}
+	rules, err := s.getPolicyService().ListRules(policy.Id)
+	if err != nil {
+		return nil, err
+	}
+	ctx := &simplePolicyContext{
+		Policy:  policy,
+		Binding: binding,
+		Inbound: inbound,
+		Rules:   rules,
+		RuleMap: buildRuleMap(rules),
+	}
+	if isNewSimpleExecutionRemark(policy.Remark) {
+		execRemark, err := decodeSimpleExecutionRemark(policy.Remark)
+		if err != nil {
+			logger.Warningf("simple execution metadata decode failed, policy=%d err=%v", policy.Id, err)
+			return nil, common.NewError("simple execution metadata is corrupted")
+		}
+		ctx.ExecRemark = execRemark
+		return ctx, nil
+	}
+	if isLegacySimpleRemark(policy.Remark) {
+		legacyMeta, ok := parseSimpleRuleRemark(policy.Remark)
+		if !ok {
+			logger.Warningf("legacy simple metadata decode failed, policy=%d", policy.Id)
+			return nil, common.NewError("simple execution metadata is corrupted")
+		}
+		ctx.LegacyMeta = legacyMeta
+		return ctx, nil
+	}
+	return nil, common.NewError("inbound already bound to advanced traffic policy")
+}
+
+func (s *RuleService) loadSimpleRuleSelection(ruleID string) (*simplePolicyContext, *simpleExecutionItem, bool, error) {
+	policyId, key, legacy, ok := parseSimpleRuleID(ruleID)
+	if !ok {
+		if numericID, err := strconv.Atoi(strings.TrimSpace(ruleID)); err == nil && numericID > 0 {
+			policyId = numericID
+			legacy = true
+		} else {
+			return nil, nil, false, common.NewError("invalid simple rule id")
+		}
+	}
+	ctx, err := s.loadSimplePolicyContextByPolicyID(policyId)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if legacy {
+		if ctx.LegacyMeta != nil {
+			return ctx, buildLegacySelectionItem(ctx.LegacyMeta, ctx.Rules), true, nil
+		}
+		if ctx.ExecRemark != nil && key == simpleTrafficAll && strings.EqualFold(ctx.Policy.DefaultTargetType, "egress") && ctx.Policy.DefaultTargetId > 0 {
+			return ctx, &simpleExecutionItem{TrafficType: simpleTrafficAll}, false, nil
+		}
+		return nil, nil, false, common.NewError("invalid simple rule id")
+	}
+	if key == simpleTrafficAll {
+		if strings.EqualFold(ctx.Policy.DefaultTargetType, "egress") && ctx.Policy.DefaultTargetId > 0 {
+			return ctx, &simpleExecutionItem{TrafficType: simpleTrafficAll}, false, nil
+		}
+		return nil, nil, false, common.NewError("simple rule not found")
+	}
+	item := findExecutionItemByKey(ctx.ExecRemark, key)
+	if item == nil {
+		return nil, nil, false, common.NewError("simple rule not found")
+	}
+	return ctx, item, false, nil
+}
+
+func (s *RuleService) updateLegacySimpleRule(ctx *simplePolicyContext, req *CreateSimpleRuleRequest, egress *n5model.Egress) (*SimpleRule, error) {
+	if ctx == nil || ctx.Policy == nil || ctx.LegacyMeta == nil {
+		return nil, common.NewError("simple rule not found")
+	}
+	legacyItem := buildLegacySelectionItem(ctx.LegacyMeta, ctx.Rules)
+	if legacyItem.TrafficType == simpleTrafficAll {
+		policy, err := s.getPolicyService().UpdatePolicy(&n5model.TrafficPolicy{
+			Id:                ctx.Policy.Id,
+			Name:              ctx.Policy.Name,
+			Remark:            ctx.Policy.Remark,
+			Enabled:           ctx.Policy.Enabled,
+			DefaultTargetType: "egress",
+			DefaultTargetId:   egress.Id,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return buildDefaultSimpleRule(policy, ctx.Binding, ctx.Inbound, policy.Enabled && ctx.Binding.Enabled, egress), nil
+	}
+
+	for _, rule := range ctx.Rules {
+		if _, err := s.getPolicyService().UpdateRule(&n5model.TrafficPolicyRule{
+			Id:         rule.Id,
+			RuleType:   rule.RuleType,
+			MatchMode:  rule.MatchMode,
+			MatchValue: rule.MatchValue,
+			TargetType: "egress",
+			TargetId:   egress.Id,
+			SortOrder:  rule.SortOrder,
+			Enabled:    rule.Enabled,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	ctx.Rules, _ = s.getPolicyService().ListRules(ctx.Policy.Id)
+	ctx.RuleMap = buildRuleMap(ctx.Rules)
+	row, _ := buildLegacySimpleRule(ctx.Policy, ctx.Binding, ctx.Inbound, ctx.Policy.Enabled && ctx.Binding.Enabled, ctx.LegacyMeta, ctx.Rules, ctx.RuleMap, map[int]*n5model.Egress{
+		egress.Id: egress,
+	}, map[int]*TrafficRuleGroupOption{}, map[string]*TrafficRuleGroupOption{})
+	return row, nil
+}
+
+func (s *RuleService) cleanupEmptyExecutionPolicy(policyId int) error {
+	ctx, err := s.loadSimplePolicyContextByPolicyID(policyId)
+	if err != nil {
+		return err
+	}
+	if ctx.ExecRemark == nil {
+		return nil
+	}
+	if len(ctx.ExecRemark.Items) > 0 {
+		return nil
+	}
+	if strings.EqualFold(ctx.Policy.DefaultTargetType, "egress") && ctx.Policy.DefaultTargetId > 0 {
+		return nil
+	}
+	if len(ctx.Rules) > 0 {
+		return nil
+	}
+	return s.getPolicyService().DeletePolicy(policyId)
+}
+
+func (s *RuleService) findBindingByPolicyID(policyId int) (*n5model.TrafficPolicyBinding, error) {
+	bindings, err := s.getPolicyService().ListBindings()
+	if err != nil {
+		return nil, err
+	}
+	for _, binding := range bindings {
+		if binding.PolicyId == policyId {
+			return binding, nil
+		}
+	}
+	return nil, common.NewError("traffic policy binding not found")
 }
 
 func (s *RuleService) buildTrafficTypes() []*SimpleTrafficOption {
@@ -535,11 +1035,11 @@ func (s *RuleService) buildTrafficTypes() []*SimpleTrafficOption {
 			Label:       simpleTrafficLabel(simpleTrafficGroup),
 			Description: "从分流规则组复制规则并生成执行策略。",
 		},
-	        {
-	            Value:       simpleTrafficCustomDomain,
-	            Label:       simpleTrafficLabel(simpleTrafficCustomDomain),
-	            Description: "为单个域名生成简单分流规则。",
-	        },
+		{
+			Value:       simpleTrafficCustomDomain,
+			Label:       simpleTrafficLabel(simpleTrafficCustomDomain),
+			Description: "为单个域名生成简单分流规则。",
+		},
 	}
 	sort.Slice(items, func(i, j int) bool {
 		order := map[string]int{
@@ -552,48 +1052,426 @@ func (s *RuleService) buildTrafficTypes() []*SimpleTrafficOption {
 	return items
 }
 
-type simpleRuleRemark struct {
-	TrafficType  string
-	GroupId      int
-	GroupName    string
-	GroupType    string
-	CustomDomain string
-}
-
-func buildSimpleRule(policy *n5model.TrafficPolicy, rules []*n5model.TrafficPolicyRule, binding *n5model.TrafficPolicyBinding, inbound *model.Inbound, egress *n5model.Egress, trafficType string, customDomain string) *SimpleRule {
-	enabled := policy != nil && policy.Enabled && binding != nil && binding.Enabled
+func buildSimpleRuleFromExecutionItem(policy *n5model.TrafficPolicy, binding *n5model.TrafficPolicyBinding, inbound *model.Inbound, enabled bool, item *simpleExecutionItem, ruleMap map[int]*n5model.TrafficPolicyRule, egressByID map[int]*n5model.Egress) (*SimpleRule, bool) {
+	if policy == nil || binding == nil || inbound == nil || item == nil {
+		return nil, false
+	}
+	egressID, ok := executionItemEgressID(item, ruleMap)
+	if !ok {
+		return nil, false
+	}
+	egress := egressByID[egressID]
+	if egress == nil {
+		return nil, false
+	}
 	status := "disabled"
 	if enabled {
 		status = "enabled"
 	}
-	ruleCount := len(rules)
-	if trafficType == simpleTrafficAll {
-		ruleCount = 0
+	trafficLabel := simpleTrafficLabel(item.TrafficType)
+	groupName := ""
+	groupType := normalizeSimpleGroupType(item.GroupType)
+	groupId := item.GroupId
+	customDomain := item.CustomDomain
+	if item.TrafficType == simpleTrafficGroup {
+		groupName = item.GroupName
+		if groupName == "" {
+			groupName = defaultSimpleGroupName(groupType)
+		}
+		trafficLabel = groupName
 	}
 	return &SimpleRule{
 		Id:              policy.Id,
+		RuleId:          buildSimpleRuleID(policy.Id, simpleExecutionItemKey(item)),
 		PolicyId:        policy.Id,
 		InboundId:       inbound.Id,
 		InboundName:     simpleInboundName(inbound),
 		InboundTag:      inbound.Tag,
-		TrafficType:     trafficType,
-		TrafficLabel:    simpleTrafficLabel(trafficType),
-		GroupId:         0,
-		GroupName:       "",
-		GroupType:       "",
+		TrafficType:     item.TrafficType,
+		TrafficLabel:    trafficLabel,
+		GroupId:         groupId,
+		GroupName:       groupName,
+		GroupType:       groupType,
 		CustomDomain:    customDomain,
 		EgressId:        egress.Id,
 		EgressName:      egress.Name,
 		EgressTag:       egress.Tag,
 		Status:          status,
 		Enabled:         enabled,
-		RuleCount:       ruleCount,
+		RuleCount:       len(item.RuleIDs),
+		CreatedAt:       policy.CreatedAt,
+		UpdatedAt:       policy.UpdatedAt,
+		PolicyName:      policy.Name,
+		PolicyRemark:    policy.Remark,
+		DefaultTargetId: policy.DefaultTargetId,
+	}, true
+}
+
+func buildDefaultSimpleRule(policy *n5model.TrafficPolicy, binding *n5model.TrafficPolicyBinding, inbound *model.Inbound, enabled bool, egress *n5model.Egress) *SimpleRule {
+	status := "disabled"
+	if enabled {
+		status = "enabled"
+	}
+	return &SimpleRule{
+		Id:              policy.Id,
+		RuleId:          buildSimpleRuleID(policy.Id, simpleTrafficAll),
+		PolicyId:        policy.Id,
+		InboundId:       inbound.Id,
+		InboundName:     simpleInboundName(inbound),
+		InboundTag:      inbound.Tag,
+		TrafficType:     simpleTrafficAll,
+		TrafficLabel:    simpleTrafficLabel(simpleTrafficAll),
+		EgressId:        egress.Id,
+		EgressName:      egress.Name,
+		EgressTag:       egress.Tag,
+		Status:          status,
+		Enabled:         enabled,
+		RuleCount:       0,
 		CreatedAt:       policy.CreatedAt,
 		UpdatedAt:       policy.UpdatedAt,
 		PolicyName:      policy.Name,
 		PolicyRemark:    policy.Remark,
 		DefaultTargetId: policy.DefaultTargetId,
 	}
+}
+
+func buildLegacySimpleRule(policy *n5model.TrafficPolicy, binding *n5model.TrafficPolicyBinding, inbound *model.Inbound, enabled bool, meta *simpleRuleRemark, rules []*n5model.TrafficPolicyRule, ruleMap map[int]*n5model.TrafficPolicyRule, egressByID map[int]*n5model.Egress, groupByID map[int]*TrafficRuleGroupOption, groupByType map[string]*TrafficRuleGroupOption) (*SimpleRule, bool) {
+	if policy == nil || binding == nil || inbound == nil || meta == nil {
+		return nil, false
+	}
+	status := "disabled"
+	if enabled {
+		status = "enabled"
+	}
+	trafficType := meta.TrafficType
+	trafficLabel := simpleTrafficLabel(trafficType)
+	groupID := meta.GroupId
+	groupName := meta.GroupName
+	groupType := meta.GroupType
+	customDomain := meta.CustomDomain
+	egressID := 0
+	if trafficType == simpleTrafficAll {
+		egressID = policy.DefaultTargetId
+	} else {
+		egressID, _ = executionItemEgressID(buildLegacySelectionItem(meta, rules), ruleMap)
+	}
+	if trafficType == simpleTrafficGroup {
+		if group := groupByID[groupID]; group != nil {
+			groupName = group.Name
+			groupType = group.GroupType
+		}
+		if groupName == "" && groupType != "" {
+			if group := groupByType[groupType]; group != nil {
+				groupName = group.Name
+				if groupID <= 0 {
+					groupID = group.Id
+				}
+			}
+		}
+		if groupName != "" {
+			trafficLabel = groupName
+		}
+	}
+	if groupType == "" && (trafficType == simpleTrafficAI || trafficType == simpleTrafficGame || trafficType == simpleTrafficStreaming) {
+		groupType = trafficType
+		if group := groupByType[groupType]; group != nil {
+			groupID = group.Id
+			groupName = group.Name
+			trafficType = simpleTrafficGroup
+			trafficLabel = group.Name
+		}
+	}
+	egress := egressByID[egressID]
+	if egress == nil {
+		return nil, false
+	}
+	return &SimpleRule{
+		Id:              policy.Id,
+		RuleId:          buildLegacySimpleRuleID(policy.Id),
+		PolicyId:        policy.Id,
+		InboundId:       inbound.Id,
+		InboundName:     simpleInboundName(inbound),
+		InboundTag:      inbound.Tag,
+		TrafficType:     trafficType,
+		TrafficLabel:    trafficLabel,
+		GroupId:         groupID,
+		GroupName:       groupName,
+		GroupType:       groupType,
+		CustomDomain:    customDomain,
+		EgressId:        egress.Id,
+		EgressName:      egress.Name,
+		EgressTag:       egress.Tag,
+		Status:          status,
+		Enabled:         enabled,
+		RuleCount:       len(rules),
+		CreatedAt:       policy.CreatedAt,
+		UpdatedAt:       policy.UpdatedAt,
+		PolicyName:      policy.Name,
+		PolicyRemark:    policy.Remark,
+		DefaultTargetId: policy.DefaultTargetId,
+	}, true
+}
+
+func buildLegacySelectionItem(meta *simpleRuleRemark, rules []*n5model.TrafficPolicyRule) *simpleExecutionItem {
+	if meta == nil {
+		return nil
+	}
+	return &simpleExecutionItem{
+		TrafficType:  meta.TrafficType,
+		GroupId:      meta.GroupId,
+		GroupName:    meta.GroupName,
+		GroupType:    meta.GroupType,
+		CustomDomain: meta.CustomDomain,
+		RuleIDs:      collectRuleIDs(rules),
+	}
+}
+
+func buildRuleMap(rules []*n5model.TrafficPolicyRule) map[int]*n5model.TrafficPolicyRule {
+	ruleMap := make(map[int]*n5model.TrafficPolicyRule, len(rules))
+	for _, rule := range rules {
+		ruleMap[rule.Id] = rule
+	}
+	return ruleMap
+}
+
+func collectRuleIDs(rules []*n5model.TrafficPolicyRule) []int {
+	items := make([]int, 0, len(rules))
+	for _, rule := range rules {
+		if rule != nil {
+			items = append(items, rule.Id)
+		}
+	}
+	return items
+}
+
+func executionItemEgressID(item *simpleExecutionItem, ruleMap map[int]*n5model.TrafficPolicyRule) (int, bool) {
+	rules, err := getExecutionItemRules(item, ruleMap)
+	if err != nil || len(rules) == 0 {
+		return 0, false
+	}
+	targetID := rules[0].TargetId
+	for _, rule := range rules[1:] {
+		if rule.TargetId != targetID || !strings.EqualFold(rule.TargetType, rules[0].TargetType) {
+			return 0, false
+		}
+	}
+	return targetID, true
+}
+
+func simpleExecutionItemKey(item *simpleExecutionItem) string {
+	if item == nil {
+		return ""
+	}
+	trafficType := normalizeSimpleTrafficType(item.TrafficType)
+	switch trafficType {
+	case simpleTrafficAll:
+		return simpleTrafficAll
+	case simpleTrafficGroup:
+		groupType := normalizeSimpleGroupType(item.GroupType)
+		if isBuiltinSimpleGroupType(groupType) {
+			return "builtin:" + groupType
+		}
+		if item.GroupId > 0 {
+			return "group:" + strconv.Itoa(item.GroupId)
+		}
+		return "group-name:" + strings.TrimSpace(strings.ToLower(item.GroupName))
+	case simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming:
+		return "builtin:" + trafficType
+	case simpleTrafficCustomDomain:
+		return "custom:" + canonicalCustomDomainKey(item.CustomDomain)
+	default:
+		return trafficType
+	}
+}
+
+func findExecutionItemByKey(remark *simpleExecutionRemark, key string) *simpleExecutionItem {
+	if remark == nil {
+		return nil
+	}
+	for _, item := range remark.Items {
+		if simpleExecutionItemKey(item) == key {
+			return item
+		}
+	}
+	return nil
+}
+
+func removeExecutionItem(remark *simpleExecutionRemark, key string) {
+	if remark == nil {
+		return
+	}
+	items := make([]*simpleExecutionItem, 0, len(remark.Items))
+	for _, item := range remark.Items {
+		if simpleExecutionItemKey(item) == key {
+			continue
+		}
+		items = append(items, item)
+	}
+	remark.Items = items
+}
+
+func getExecutionItemRules(item *simpleExecutionItem, ruleMap map[int]*n5model.TrafficPolicyRule) ([]*n5model.TrafficPolicyRule, error) {
+	if item == nil {
+		return nil, common.NewError("simple execution metadata is corrupted")
+	}
+	if len(item.RuleIDs) == 0 {
+		return nil, common.NewError("simple execution metadata is corrupted")
+	}
+	items := make([]*n5model.TrafficPolicyRule, 0, len(item.RuleIDs))
+	for _, ruleID := range item.RuleIDs {
+		rule := ruleMap[ruleID]
+		if rule == nil {
+			return nil, common.NewError("simple execution metadata is corrupted")
+		}
+		items = append(items, rule)
+	}
+	return items, nil
+}
+
+func canonicalCustomDomainKey(value string) string {
+	_, _, displayValue, err := parseCustomDomainRule(value)
+	if err != nil {
+		return strings.TrimSpace(strings.ToLower(value))
+	}
+	return strings.TrimSpace(strings.ToLower(displayValue))
+}
+
+func buildSimpleExecutionRemark(remark *simpleExecutionRemark) (string, simpleExecutionRemarkStats, error) {
+	if remark == nil {
+		remark = &simpleExecutionRemark{}
+	}
+	normalized := &simpleExecutionRemark{
+		Version: simpleExecutionRemarkVersion,
+		Items:   make([]*simpleExecutionItem, 0, len(remark.Items)),
+	}
+	seenItems := make(map[string]struct{}, len(remark.Items))
+	for _, item := range remark.Items {
+		if item == nil {
+			continue
+		}
+		copyValue := *item
+		copyValue.TrafficType = normalizeSimpleTrafficType(copyValue.TrafficType)
+		copyValue.GroupType = normalizeSimpleGroupType(copyValue.GroupType)
+		copyValue.CustomDomain = strings.TrimSpace(copyValue.CustomDomain)
+		copyValue.GroupName = strings.TrimSpace(copyValue.GroupName)
+		copyValue.RuleIDs = append([]int(nil), copyValue.RuleIDs...)
+		if copyValue.TrafficType == simpleTrafficAll {
+			return "", simpleExecutionRemarkStats{}, common.NewError("simple execution metadata item is invalid")
+		}
+		if copyValue.TrafficType == simpleTrafficGroup && copyValue.GroupId <= 0 && copyValue.GroupType == "" {
+			return "", simpleExecutionRemarkStats{}, common.NewError("simple execution metadata item is invalid")
+		}
+		if copyValue.TrafficType == simpleTrafficCustomDomain && copyValue.CustomDomain == "" {
+			return "", simpleExecutionRemarkStats{}, common.NewError("simple execution metadata item is invalid")
+		}
+		if len(copyValue.RuleIDs) == 0 {
+			return "", simpleExecutionRemarkStats{}, common.NewError("simple execution metadata item is invalid")
+		}
+		if err := validatePositiveUniqueRuleIDs(copyValue.RuleIDs); err != nil {
+			return "", simpleExecutionRemarkStats{}, err
+		}
+		key := simpleExecutionItemKey(&copyValue)
+		if key == "" {
+			return "", simpleExecutionRemarkStats{}, common.NewError("simple execution metadata item is invalid")
+		}
+		if _, ok := seenItems[key]; ok {
+			return "", simpleExecutionRemarkStats{}, common.NewError("simple execution metadata contains duplicate item")
+		}
+		seenItems[key] = struct{}{}
+		normalized.Items = append(normalized.Items, &copyValue)
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return "", simpleExecutionRemarkStats{}, err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(data)
+	total := len(simpleExecutionRemarkPrefix) + len(encoded)
+	if total > simpleExecutionRemarkMaxBytes {
+		return "", simpleExecutionRemarkStats{
+			RawJSONBytes:     len(data),
+			Base64Bytes:      len(encoded),
+			TotalRemarkBytes: total,
+		}, common.NewError("Simple 执行元数据过大，请减少规则数量")
+	}
+	return simpleExecutionRemarkPrefix + encoded, simpleExecutionRemarkStats{
+		RawJSONBytes:     len(data),
+		Base64Bytes:      len(encoded),
+		TotalRemarkBytes: total,
+	}, nil
+}
+
+func decodeSimpleExecutionRemark(remark string) (*simpleExecutionRemark, error) {
+	remark = strings.TrimSpace(remark)
+	if !isNewSimpleExecutionRemark(remark) {
+		return nil, common.NewError("invalid simple execution remark")
+	}
+	if len(remark) > simpleExecutionRemarkMaxBytes {
+		return nil, common.NewError("simple execution metadata is too large")
+	}
+	raw := strings.TrimPrefix(remark, simpleExecutionRemarkPrefix)
+	if raw == "" {
+		return nil, common.NewError("simple execution metadata is empty")
+	}
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, common.NewError("simple execution metadata decode failed")
+	}
+	parsed := &simpleExecutionRemark{}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(parsed); err != nil {
+		return nil, common.NewError("simple execution metadata decode failed")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, common.NewError("simple execution metadata decode failed")
+	}
+	if parsed.Version != simpleExecutionRemarkVersion {
+		return nil, common.NewError("unsupported simple execution metadata version")
+	}
+	if parsed.Items == nil {
+		parsed.Items = []*simpleExecutionItem{}
+	}
+	seenItems := make(map[string]struct{}, len(parsed.Items))
+	for _, item := range parsed.Items {
+		if item == nil {
+			return nil, common.NewError("simple execution metadata contains empty item")
+		}
+		item.TrafficType = normalizeSimpleTrafficType(item.TrafficType)
+		item.GroupType = normalizeSimpleGroupType(item.GroupType)
+		item.CustomDomain = strings.TrimSpace(item.CustomDomain)
+		item.GroupName = strings.TrimSpace(item.GroupName)
+		if err := validatePositiveUniqueRuleIDs(item.RuleIDs); err != nil {
+			return nil, err
+		}
+		if item.TrafficType == simpleTrafficAll {
+			return nil, common.NewError("simple execution metadata item is invalid")
+		}
+		if item.TrafficType == simpleTrafficGroup {
+			if item.GroupId <= 0 && item.GroupType == "" {
+				return nil, common.NewError("simple execution metadata item is invalid")
+			}
+		}
+		if item.TrafficType == simpleTrafficCustomDomain && item.CustomDomain == "" {
+			return nil, common.NewError("simple execution metadata item is invalid")
+		}
+		if len(item.RuleIDs) == 0 {
+			return nil, common.NewError("simple execution metadata item is invalid")
+		}
+		key := simpleExecutionItemKey(item)
+		if key == "" {
+			return nil, common.NewError("simple execution metadata item is invalid")
+		}
+		if _, ok := seenItems[key]; ok {
+			return nil, common.NewError("simple execution metadata contains duplicate item")
+		}
+		seenItems[key] = struct{}{}
+	}
+	return parsed, nil
+}
+
+func parseSimpleExecutionRemark(remark string) (*simpleExecutionRemark, bool) {
+	parsed, err := decodeSimpleExecutionRemark(remark)
+	return parsed, err == nil
 }
 
 func buildSimpleRuleRemark(trafficType string, customDomain string) string {
@@ -608,7 +1486,7 @@ func buildSimpleRuleRemark(trafficType string, customDomain string) string {
 
 func parseSimpleRuleRemark(remark string) (*simpleRuleRemark, bool) {
 	remark = strings.TrimSpace(remark)
-	if !strings.HasPrefix(remark, simpleRuleRemarkPrefix) {
+	if !isLegacySimpleRemark(remark) {
 		return nil, false
 	}
 	meta := &simpleRuleRemark{}
@@ -646,7 +1524,7 @@ func parseSimpleRuleRemark(remark string) (*simpleRuleRemark, bool) {
 		}
 	}
 	if meta.TrafficType == simpleTrafficGroup {
-		if meta.GroupId <= 0 {
+		if meta.GroupId <= 0 && meta.GroupType == "" {
 			return nil, false
 		}
 		if meta.GroupName == "" {
@@ -658,6 +1536,75 @@ func parseSimpleRuleRemark(remark string) (*simpleRuleRemark, bool) {
 		return nil, false
 	}
 	return meta, true
+}
+
+func isNewSimpleExecutionRemark(remark string) bool {
+	return strings.HasPrefix(strings.TrimSpace(remark), simpleExecutionRemarkPrefix)
+}
+
+func isLegacySimpleRemark(remark string) bool {
+	return strings.HasPrefix(strings.TrimSpace(remark), simpleRuleRemarkPrefix)
+}
+
+func isOrdinaryPolicyRemark(remark string) bool {
+	return !isNewSimpleExecutionRemark(remark) && !isLegacySimpleRemark(remark)
+}
+
+func validatePositiveUniqueRuleIDs(values []int) error {
+	seen := make(map[int]struct{}, len(values))
+	for _, value := range values {
+		if value <= 0 {
+			return common.NewError("simple execution metadata contains invalid rule id")
+		}
+		if _, ok := seen[value]; ok {
+			return common.NewError("simple execution metadata contains duplicate rule id")
+		}
+		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func buildSimpleRuleID(policyId int, key string) string {
+	return simpleRuleIDPrefix + strconv.Itoa(policyId) + ":" + base64.RawURLEncoding.EncodeToString([]byte(key))
+}
+
+func buildLegacySimpleRuleID(policyId int) string {
+	return legacySimpleRuleIDPrefix + strconv.Itoa(policyId)
+}
+
+func parseSimpleRuleID(ruleID string) (int, string, bool, bool) {
+	ruleID = strings.TrimSpace(ruleID)
+	if strings.HasPrefix(ruleID, legacySimpleRuleIDPrefix) {
+		policyID, err := strconv.Atoi(strings.TrimPrefix(ruleID, legacySimpleRuleIDPrefix))
+		if err != nil || policyID <= 0 {
+			return 0, "", false, false
+		}
+		return policyID, "", true, true
+	}
+	if !strings.HasPrefix(ruleID, simpleRuleIDPrefix) {
+		return 0, "", false, false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(ruleID, simpleRuleIDPrefix), ":", 2)
+	if len(parts) != 2 {
+		return 0, "", false, false
+	}
+	policyID, err := strconv.Atoi(parts[0])
+	if err != nil || policyID <= 0 {
+		return 0, "", false, false
+	}
+	keyData, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return 0, "", false, false
+	}
+	return policyID, string(keyData), false, true
+}
+
+func simpleExecutionPolicyName(inbound *model.Inbound) string {
+	name := simpleInboundName(inbound)
+	if name == "" {
+		name = "inbound-" + strconv.Itoa(inbound.Id)
+	}
+	return "Simple 执行策略 - " + name
 }
 
 func simplePolicyName(inbound *model.Inbound, trafficType string) string {

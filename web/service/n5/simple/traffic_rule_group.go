@@ -17,20 +17,20 @@ const (
 )
 
 type TrafficRuleGroup struct {
-	Id         int                     `json:"id"`
-	Name       string                  `json:"name"`
-	GroupType  string                  `json:"groupType"`
-	GroupLabel string                  `json:"groupLabel"`
-	KindLabel  string                  `json:"kindLabel"`
-	Builtin    bool                    `json:"builtin"`
-	Status     string                  `json:"status"`
-	Enabled    bool                    `json:"enabled"`
-	RuleCount  int                     `json:"ruleCount"`
-	SnapshotCount int                  `json:"snapshotCount"`
-	DeleteHint string                  `json:"deleteHint"`
-	Rules      []*TrafficRuleGroupRule `json:"rules,omitempty"`
-	CreatedAt  int64                   `json:"createdAt"`
-	UpdatedAt  int64                   `json:"updatedAt"`
+	Id            int                     `json:"id"`
+	Name          string                  `json:"name"`
+	GroupType     string                  `json:"groupType"`
+	GroupLabel    string                  `json:"groupLabel"`
+	KindLabel     string                  `json:"kindLabel"`
+	Builtin       bool                    `json:"builtin"`
+	Status        string                  `json:"status"`
+	Enabled       bool                    `json:"enabled"`
+	RuleCount     int                     `json:"ruleCount"`
+	SnapshotCount int                     `json:"snapshotCount"`
+	DeleteHint    string                  `json:"deleteHint"`
+	Rules         []*TrafficRuleGroupRule `json:"rules,omitempty"`
+	CreatedAt     int64                   `json:"createdAt"`
+	UpdatedAt     int64                   `json:"updatedAt"`
 }
 
 type TrafficRuleGroupRule struct {
@@ -549,6 +549,25 @@ func countSimpleRuleSnapshots(groupId int) int {
 	}
 	count := 0
 	for _, policy := range policies {
+		if execRemark, ok := parseSimpleExecutionRemark(policy.Remark); ok {
+			for _, item := range execRemark.Items {
+				if item == nil {
+					continue
+				}
+				if item.TrafficType != simpleTrafficGroup {
+					continue
+				}
+				if item.GroupId == groupId {
+					count++
+					break
+				}
+				if item.GroupId <= 0 && normalizeSimpleGroupType(item.GroupType) == builtinSimpleGroupTypeByID(groupId) {
+					count++
+					break
+				}
+			}
+			continue
+		}
 		meta, ok := parseSimpleRuleRemark(policy.Remark)
 		if !ok {
 			continue
@@ -558,6 +577,19 @@ func countSimpleRuleSnapshots(groupId int) int {
 		}
 	}
 	return count
+}
+
+func builtinSimpleGroupTypeByID(groupId int) string {
+	switch groupId {
+	case 1:
+		return simpleTrafficAI
+	case 2:
+		return simpleTrafficGame
+	case 3:
+		return simpleTrafficStreaming
+	default:
+		return ""
+	}
 }
 
 func buildSimpleGroupSnapshotRemark(group *TrafficRuleGroup) string {

@@ -211,6 +211,37 @@ func TestN5APIChain(t *testing.T) {
 	}
 }
 
+func TestTrafficPolicyAPIBlocksSimpleManagedRemarkMutation(t *testing.T) {
+	initControllerTestDB(t)
+	engine := newTestEngine(t)
+
+	policySvc := &n5service.TrafficPolicyService{}
+	policy, err := policySvc.Create(&n5model.TrafficPolicy{
+		Name:    "simple-managed-policy",
+		Remark:  "n5-simple-exec|eyJ2ZXJzaW9uIjoxLCJpdGVtcyI6W119",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create policy failed: %v", err)
+	}
+
+	clearRestartFlag()
+	updateBody := bytes.NewBufferString(`{"name":"simple-managed-policy-updated","remark":"ordinary-remark","enabled":true}`)
+	updateReq, _ := http.NewRequest(http.MethodPost, "/n5/api/traffic-policy/update/"+strconv.Itoa(policy.Id), updateBody)
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp := httptest.NewRecorder()
+	engine.ServeHTTP(updateResp, updateReq)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("unexpected update status: %d", updateResp.Code)
+	}
+	if !bytes.Contains(updateResp.Body.Bytes(), []byte(`"success":false`)) || !bytes.Contains(updateResp.Body.Bytes(), []byte(`Simple 出口规则管理`)) {
+		t.Fatalf("unexpected blocked update response: %s", updateResp.Body.String())
+	}
+	if (&coreservice.XrayService{}).IsNeedRestartAndSetFalse() {
+		t.Fatal("blocked update should not trigger restart")
+	}
+}
+
 func TestTrafficTemplateAPIResponses(t *testing.T) {
 	initControllerTestDB(t)
 	engine := newTestEngine(t)

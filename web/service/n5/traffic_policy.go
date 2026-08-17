@@ -87,7 +87,13 @@ func (s *TrafficPolicyService) UpdatePolicy(policy *n5model.TrafficPolicy) (*n5m
 	}
 
 	record.Name = name
-	record.Remark = strings.TrimSpace(policy.Remark)
+	nextRemark := strings.TrimSpace(policy.Remark)
+	currentManaged := isSimpleManagedTrafficPolicyRemark(record.Remark)
+	nextManaged := isSimpleManagedTrafficPolicyRemark(nextRemark)
+	if currentManaged != nextManaged {
+		return nil, common.NewError("该策略由 Simple 出口规则管理，请在出口规则页面修改")
+	}
+	record.Remark = nextRemark
 	record.DefaultTargetType = targetType
 	record.DefaultTargetId = policy.DefaultTargetId
 	record.Enabled = policy.Enabled
@@ -216,6 +222,27 @@ func (s *TrafficPolicyService) ListRules(policyId int) ([]*n5model.TrafficPolicy
 		Order("sort_order asc, id asc").
 		Find(&records).Error
 	return records, err
+}
+
+const (
+	simpleManagedExecRemarkPrefix   = "n5-simple-exec|"
+	simpleManagedLegacyRemarkPrefix = "n5-simple|"
+)
+
+func isSimpleExecutionTrafficPolicyRemark(remark string) bool {
+	return strings.HasPrefix(strings.TrimSpace(remark), simpleManagedExecRemarkPrefix)
+}
+
+func isLegacySimpleTrafficPolicyRemark(remark string) bool {
+	return strings.HasPrefix(strings.TrimSpace(remark), simpleManagedLegacyRemarkPrefix)
+}
+
+func isSimpleManagedTrafficPolicyRemark(remark string) bool {
+	return isSimpleExecutionTrafficPolicyRemark(remark) || isLegacySimpleTrafficPolicyRemark(remark)
+}
+
+func isOrdinaryTrafficPolicyRemark(remark string) bool {
+	return !isSimpleManagedTrafficPolicyRemark(remark)
 }
 
 func (s *TrafficPolicyService) UpdateRule(rule *n5model.TrafficPolicyRule) (*n5model.TrafficPolicyRule, error) {

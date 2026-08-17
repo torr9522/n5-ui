@@ -3,7 +3,9 @@ package n5
 import (
 	"github.com/gin-gonic/gin"
 	"strconv"
+	"strings"
 	n5model "x-ui/database/model/n5"
+	"x-ui/util/common"
 	coreservice "x-ui/web/service"
 	n5service "x-ui/web/service/n5"
 )
@@ -111,6 +113,15 @@ func (a *TrafficPolicyController) update(c *gin.Context) {
 	record := &n5model.TrafficPolicy{Id: id}
 	if err := c.ShouldBind(record); err != nil {
 		jsonMsg(c, "update traffic policy", err)
+		return
+	}
+	current, err := a.policyService.GetPolicy(id)
+	if err != nil {
+		jsonMsg(c, "update traffic policy", err)
+		return
+	}
+	if isSimpleManagedTrafficPolicyUpdateBlocked(current, record) {
+		jsonMsg(c, "update traffic policy", common.NewError("该策略由 Simple 出口规则管理，请在出口规则页面修改"))
 		return
 	}
 	updated, err := a.policyService.UpdatePolicy(record)
@@ -355,4 +366,18 @@ func (a *TrafficPolicyController) getXrayService() trafficRestartTrigger {
 		return a.xrayService
 	}
 	return &coreservice.XrayService{}
+}
+
+func isSimpleManagedTrafficPolicyUpdateBlocked(current *n5model.TrafficPolicy, next *n5model.TrafficPolicy) bool {
+	if current == nil || next == nil {
+		return false
+	}
+	remark := strings.TrimSpace(current.Remark)
+	if !strings.HasPrefix(remark, "n5-simple-exec|") && !strings.HasPrefix(remark, "n5-simple|") {
+		return false
+	}
+	return strings.TrimSpace(next.Name) != strings.TrimSpace(current.Name) ||
+		strings.TrimSpace(next.Remark) != strings.TrimSpace(current.Remark) ||
+		strings.TrimSpace(strings.ToLower(next.DefaultTargetType)) != strings.TrimSpace(strings.ToLower(current.DefaultTargetType)) ||
+		next.DefaultTargetId != current.DefaultTargetId
 }

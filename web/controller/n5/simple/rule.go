@@ -2,6 +2,7 @@ package simple
 
 import (
 	"net/http"
+	"strconv"
 	"x-ui/web/entity"
 	coreservice "x-ui/web/service"
 	simpleservice "x-ui/web/service/n5/simple"
@@ -12,7 +13,8 @@ import (
 type ruleAPI interface {
 	ListSimpleRules() (*simpleservice.SimpleRuleListResult, error)
 	CreateSimpleRule(req *simpleservice.CreateSimpleRuleRequest) (*simpleservice.SimpleRule, error)
-	DeleteSimpleRule(policyId int) error
+	UpdateSimpleRule(ruleId string, req *simpleservice.CreateSimpleRuleRequest) (*simpleservice.SimpleRule, error)
+	DeleteSimpleRule(ruleId string) error
 }
 
 type ruleRestartTrigger interface {
@@ -50,6 +52,7 @@ func (a *RuleController) initRouter(g *gin.RouterGroup) {
 	apiGroup.Use(checkLogin)
 	apiGroup.GET("/list", a.list)
 	apiGroup.POST("/add", a.add)
+	apiGroup.POST("/update", a.update)
 	apiGroup.POST("/delete", a.del)
 	apiGroup.GET("/n5-status", a.n5Status)
 	apiGroup.POST("/n5-status", a.updateN5Status)
@@ -83,22 +86,52 @@ func (a *RuleController) add(c *gin.Context) {
 	jsonObj(c, created, nil)
 }
 
+func (a *RuleController) update(c *gin.Context) {
+	payload := struct {
+		RuleId string `json:"ruleId" form:"ruleId"`
+		simpleservice.CreateSimpleRuleRequest
+	}{}
+	if err := c.ShouldBind(&payload); err != nil {
+		jsonMsg(c, "update simple rule", err)
+		return
+	}
+	if payload.RuleId == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"msg":     "update simple rule失败: invalid simple rule id",
+		})
+		return
+	}
+	updated, err := a.service.UpdateSimpleRule(payload.RuleId, &payload.CreateSimpleRuleRequest)
+	if err != nil {
+		jsonMsg(c, "update simple rule", err)
+		return
+	}
+	a.getXrayService().SetToNeedRestart()
+	jsonObj(c, updated, nil)
+}
+
 func (a *RuleController) del(c *gin.Context) {
 	payload := struct {
-		Id int `json:"id" form:"id"`
+		Id     int    `json:"id" form:"id"`
+		RuleId string `json:"ruleId" form:"ruleId"`
 	}{}
 	if err := c.ShouldBind(&payload); err != nil {
 		jsonMsg(c, "delete simple rule", err)
 		return
 	}
-	if payload.Id <= 0 {
+	ruleId := payload.RuleId
+	if ruleId == "" && payload.Id > 0 {
+		ruleId = strconv.Itoa(payload.Id)
+	}
+	if ruleId == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"msg":     "delete simple rule失败: invalid simple rule id",
 		})
 		return
 	}
-	err := a.service.DeleteSimpleRule(payload.Id)
+	err := a.service.DeleteSimpleRule(ruleId)
 	if err == nil {
 		a.getXrayService().SetToNeedRestart()
 	}
