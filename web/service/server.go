@@ -167,16 +167,16 @@ func (s *ServerService) GetStatus(lastStatus *Status) *Status {
 }
 
 func (s *ServerService) GetXrayVersions() ([]string, error) {
-	return []string{"k-ui-local"}, nil
+	return []string{"26.5.3"}, nil
 }
 
 func (s *ServerService) downloadXRay(version string) (string, error) {
 	_ = version
 	arch := runtime.GOARCH
-	zipName := "Xray-linux-64.zip"
-	if arch == "arm64" {
-		zipName = "Xray-linux-arm64-v8a.zip"
+	if arch != "amd64" {
+		return "", fmt.Errorf("current N5 runtime 26.5.3 release only supports amd64/x86_64; arch %s is not included", arch)
 	}
+	zipName := "Xray-linux-64.zip"
 
 	localCandidates := []string{
 		filepath.Join("releases", zipName),
@@ -199,7 +199,7 @@ func (s *ServerService) downloadXRay(version string) (string, error) {
 
 	baseURL := strings.TrimRight(os.Getenv("XUI_RELEASES_BASE"), "/")
 	if baseURL == "" {
-		baseURL = "https://github.com/torr9522/n5-ui/releases/download/v0.1.0-beta-simple"
+		baseURL = "https://github.com/torr9522/n5-ui/releases/download/v0.1.1-runtime-26.5.3-amd64"
 	}
 	url := fmt.Sprintf("%s/%s", baseURL, zipName)
 	resp, err := http.Get(url)

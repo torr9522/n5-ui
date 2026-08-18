@@ -11,9 +11,9 @@ XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n5-ui/m
 XUI_REPO_URL="${XUI_REPO_URL:-https://github.com/torr9522/n5-ui.git}"
 XUI_REPO_BRANCH="${XUI_REPO_BRANCH:-main}"
 INSTALL_MODE="${INSTALL_MODE:-source}"
-XUI_RELEASE_TAG="${XUI_RELEASE_TAG:-v0.1.0-beta-simple}"
+XUI_RELEASE_TAG="${XUI_RELEASE_TAG:-v0.1.1-runtime-26.5.3-amd64}"
 XUI_RELEASES_BASE="${XUI_RELEASES_BASE:-${XUI_RELEASES_RAW_BASE:-https://github.com/torr9522/n5-ui/releases/download/${XUI_RELEASE_TAG}}}"
-XUI_XRAY_VERSION="${XUI_XRAY_VERSION:-26.3.27}"
+XUI_XRAY_VERSION="${XUI_XRAY_VERSION:-26.5.3}"
 
 resolve_install_script_dir() {
     local script_source="${BASH_SOURCE[0]:-$0}"
@@ -104,9 +104,6 @@ get_xray_release_asset_name() {
         amd64)
             echo "Xray-linux-64.zip"
             ;;
-        arm64)
-            echo "Xray-linux-arm64-v8a.zip"
-            ;;
         *)
             return 1
             ;;
@@ -123,14 +120,9 @@ sync_default_xray_assets() {
         "/usr/local/x-ui/releases/$(get_xray_release_asset_name "${arch}")"
     )
 
-    case "${arch}" in
-        amd64|arm64)
-            ;;
-        *)
-            echo -e "${red}不支持的 xray 架构: ${arch}${plain}"
-            return 1
-            ;;
-    esac
+    if [[ "${arch}" != "amd64" ]]; then
+        error_exit "当前 N5 runtime 26.5.3 正式切换暂仅支持 amd64/x86_64；arm64 暂未纳入本次发布。"
+    fi
 
     command -v unzip >/dev/null 2>&1 || error_exit "未找到 unzip，无法同步默认 xray 版本。"
     xray_asset_name="$(get_xray_release_asset_name "${arch}")" || error_exit "无法确定 xray 资源包名称。"
@@ -207,9 +199,9 @@ arch=$(arch)
 if [[ $arch == "x86_64" || $arch == "x64" || $arch == "amd64" ]]; then
     arch="amd64"
 elif [[ $arch == "aarch64" || $arch == "arm64" ]]; then
-    arch="arm64"
+    error_exit "当前 N5 runtime 26.5.3 正式切换暂仅支持 amd64/x86_64；arm64 暂未纳入本次发布。"
 else
-    error_exit "不支持的系统架构: ${arch}，当前仅支持 amd64 / arm64。"
+    error_exit "不支持的系统架构: ${arch}，当前仅支持 amd64 / x86_64。"
 fi
 
 echo "架构: ${arch}"
@@ -620,9 +612,8 @@ install_x-ui() {
         fi
         rm -rf "${build_root}"
     else
-        if [[ "${package_arch}" == "arm64" ]]; then
-            echo -e "${yellow}Only amd64 local release is provided, fallback to amd64 package and rebuild locally.${plain}"
-            package_arch="amd64"
+        if [[ "${package_arch}" != "amd64" ]]; then
+            error_exit "当前 N5 runtime 26.5.3 正式切换暂仅支持 amd64/x86_64；arm64 暂未纳入本次发布。"
         fi
         url="${XUI_PACKAGE_URL:-${XUI_RELEASES_BASE}/x-ui-linux-${package_arch}.tar.gz}"
         package_file="/usr/local/x-ui-linux-${package_arch}.tar.gz"

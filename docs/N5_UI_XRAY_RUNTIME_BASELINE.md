@@ -19,11 +19,11 @@
 /usr/local/x-ui/bin/xray-linux-{arch}
 ```
 
-本次使用项目当前 release 地址下载并验证了 amd64 Xray：
+本次使用 N5 自有 release 地址下载并验证了 amd64 Xray：
 
 ```text
 来源：
-https://github.com/torr9522/n3-ui/releases/download/n3-ui-assets/xray-linux-amd64.zip
+https://github.com/torr9522/n5-ui/releases/download/v0.1.1-runtime-26.5.3-amd64/Xray-linux-64.zip
 
 版本：
 Xray 26.5.3
@@ -82,6 +82,11 @@ systemd 工作目录：
 依据：
 
 - `install.sh`
+
+## 4. 本次切换范围
+
+- 仅支持 `amd64/x86_64`
+- `arm64` 不纳入本次 runtime 切换
 
 本次能力验证使用的临时文件：
 
@@ -195,7 +200,7 @@ Phase 2.4 默认按以下信息进行配置验证：
 ```text
 运行平台：linux/amd64
 运行文件：bin/xray-linux-amd64
-来源：n3-ui n3-ui-assets release zip
+来源：n5-ui v0.1.1-runtime-26.5.3-amd64 release zip
 已验证版本：Xray 26.5.3
 fallbackTag：必须配合 observatory
 ```
@@ -214,4 +219,3 @@ fallbackTag：必须配合 observatory
 
 - `fallbackTag` 会隐式引入 observatory 依赖。
 - Phase 2.4 合并层必须在最终配置验证阶段检查 observatory 依赖，而不是只检查 JSON 字段。
-

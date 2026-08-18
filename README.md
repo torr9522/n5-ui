@@ -49,9 +49,9 @@ For English Users,please use the following command to install English supported 
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install_en.sh)
 ```
-如需安装指定的版本,可以在上述命令中指定版本号,如指定版本为`v0.1.0-beta-simple`,安装命令如下：    
+如需安装指定的版本,可以在上述命令中指定版本号,如指定版本为`v0.1.1-runtime-26.5.3-amd64`,安装命令如下：
 ```  
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install.sh) v0.1.0-beta-simple
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install.sh) v0.1.1-runtime-26.5.3-amd64
 ```
 
 # 效果预览  
