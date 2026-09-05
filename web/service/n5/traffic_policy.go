@@ -12,6 +12,8 @@ import (
 type TrafficPolicyService struct {
 }
 
+const simpleManagedTrafficPolicyMutationMessage = "该策略由 N5 简易出口规则管理，请在“出口规则”页面修改"
+
 func (s *TrafficPolicyService) Create(policy *n5model.TrafficPolicy) (*n5model.TrafficPolicy, error) {
 	if policy == nil {
 		return nil, common.NewError("traffic policy is nil")
@@ -42,6 +44,13 @@ func (s *TrafficPolicyService) Create(policy *n5model.TrafficPolicy) (*n5model.T
 		return nil, err
 	}
 	return record, nil
+}
+
+func (s *TrafficPolicyService) CreatePolicyFromAdvanced(policy *n5model.TrafficPolicy) (*n5model.TrafficPolicy, error) {
+	if policy != nil && isSimpleManagedTrafficPolicyRemark(policy.Remark) {
+		return nil, simpleManagedTrafficPolicyMutationError()
+	}
+	return s.Create(policy)
 }
 
 func (s *TrafficPolicyService) Get(id int) (*n5model.TrafficPolicy, error) {
@@ -103,6 +112,20 @@ func (s *TrafficPolicyService) UpdatePolicy(policy *n5model.TrafficPolicy) (*n5m
 	return record, nil
 }
 
+func (s *TrafficPolicyService) UpdatePolicyFromAdvanced(policy *n5model.TrafficPolicy) (*n5model.TrafficPolicy, error) {
+	if policy == nil || policy.Id <= 0 {
+		return nil, common.NewError("invalid traffic policy")
+	}
+	current, err := s.GetPolicy(policy.Id)
+	if err != nil {
+		return nil, err
+	}
+	if isSimpleManagedTrafficPolicyRemark(current.Remark) || isSimpleManagedTrafficPolicyRemark(policy.Remark) {
+		return nil, simpleManagedTrafficPolicyMutationError()
+	}
+	return s.UpdatePolicy(policy)
+}
+
 func (s *TrafficPolicyService) DeletePolicy(id int) error {
 	if id <= 0 {
 		return common.NewError("invalid policy id")
@@ -123,12 +146,33 @@ func (s *TrafficPolicyService) DeletePolicy(id int) error {
 	})
 }
 
+func (s *TrafficPolicyService) DeletePolicyFromAdvanced(id int) error {
+	if err := s.ensurePolicyOrdinary(id); err != nil {
+		return err
+	}
+	return s.DeletePolicy(id)
+}
+
 func (s *TrafficPolicyService) EnablePolicy(id int) (*n5model.TrafficPolicy, error) {
 	return s.updatePolicyEnabled(id, true)
 }
 
 func (s *TrafficPolicyService) DisablePolicy(id int) (*n5model.TrafficPolicy, error) {
 	return s.updatePolicyEnabled(id, false)
+}
+
+func (s *TrafficPolicyService) EnablePolicyFromAdvanced(id int) (*n5model.TrafficPolicy, error) {
+	if err := s.ensurePolicyOrdinary(id); err != nil {
+		return nil, err
+	}
+	return s.EnablePolicy(id)
+}
+
+func (s *TrafficPolicyService) DisablePolicyFromAdvanced(id int) (*n5model.TrafficPolicy, error) {
+	if err := s.ensurePolicyOrdinary(id); err != nil {
+		return nil, err
+	}
+	return s.DisablePolicy(id)
 }
 
 func (s *TrafficPolicyService) updatePolicyEnabled(id int, enabled bool) (*n5model.TrafficPolicy, error) {
@@ -205,11 +249,28 @@ func (s *TrafficPolicyService) AddRule(rule *n5model.TrafficPolicyRule) (*n5mode
 	return record, nil
 }
 
+func (s *TrafficPolicyService) AddRuleFromAdvanced(rule *n5model.TrafficPolicyRule) (*n5model.TrafficPolicyRule, error) {
+	if rule == nil || rule.PolicyId <= 0 {
+		return nil, common.NewError("invalid traffic policy rule")
+	}
+	if err := s.ensurePolicyOrdinary(rule.PolicyId); err != nil {
+		return nil, err
+	}
+	return s.AddRule(rule)
+}
+
 func (s *TrafficPolicyService) DeleteRule(ruleId int) error {
 	if ruleId <= 0 {
 		return common.NewError("invalid rule id")
 	}
 	return database.GetDB().Delete(&n5model.TrafficPolicyRule{}, ruleId).Error
+}
+
+func (s *TrafficPolicyService) DeleteRuleFromAdvanced(ruleId int) error {
+	if _, err := s.ensureRulePolicyOrdinary(ruleId, 0); err != nil {
+		return err
+	}
+	return s.DeleteRule(ruleId)
 }
 
 func (s *TrafficPolicyService) ListRules(policyId int) ([]*n5model.TrafficPolicyRule, error) {
@@ -243,6 +304,41 @@ func isSimpleManagedTrafficPolicyRemark(remark string) bool {
 
 func isOrdinaryTrafficPolicyRemark(remark string) bool {
 	return !isSimpleManagedTrafficPolicyRemark(remark)
+}
+
+func simpleManagedTrafficPolicyMutationError() error {
+	return common.NewError(simpleManagedTrafficPolicyMutationMessage)
+}
+
+func (s *TrafficPolicyService) ensurePolicyOrdinary(policyId int) error {
+	if policyId <= 0 {
+		return common.NewError("invalid policy id")
+	}
+	policy, err := s.GetPolicy(policyId)
+	if err != nil {
+		return err
+	}
+	if isSimpleManagedTrafficPolicyRemark(policy.Remark) {
+		return simpleManagedTrafficPolicyMutationError()
+	}
+	return nil
+}
+
+func (s *TrafficPolicyService) ensureRulePolicyOrdinary(ruleId int, expectedPolicyId int) (*n5model.TrafficPolicyRule, error) {
+	if ruleId <= 0 {
+		return nil, common.NewError("invalid rule id")
+	}
+	rule := &n5model.TrafficPolicyRule{}
+	if err := database.GetDB().Model(&n5model.TrafficPolicyRule{}).Where("id = ?", ruleId).First(rule).Error; err != nil {
+		return nil, err
+	}
+	if expectedPolicyId > 0 && rule.PolicyId != expectedPolicyId {
+		return nil, common.NewError("rule not found in policy")
+	}
+	if err := s.ensurePolicyOrdinary(rule.PolicyId); err != nil {
+		return nil, err
+	}
+	return rule, nil
 }
 
 func (s *TrafficPolicyService) UpdateRule(rule *n5model.TrafficPolicyRule) (*n5model.TrafficPolicyRule, error) {
@@ -290,12 +386,36 @@ func (s *TrafficPolicyService) UpdateRule(rule *n5model.TrafficPolicyRule) (*n5m
 	return record, nil
 }
 
+func (s *TrafficPolicyService) UpdateRuleFromAdvanced(rule *n5model.TrafficPolicyRule) (*n5model.TrafficPolicyRule, error) {
+	if rule == nil || rule.Id <= 0 {
+		return nil, common.NewError("invalid traffic policy rule")
+	}
+	if _, err := s.ensureRulePolicyOrdinary(rule.Id, rule.PolicyId); err != nil {
+		return nil, err
+	}
+	return s.UpdateRule(rule)
+}
+
 func (s *TrafficPolicyService) EnableRule(id int) (*n5model.TrafficPolicyRule, error) {
 	return s.updateRuleEnabled(id, true)
 }
 
 func (s *TrafficPolicyService) DisableRule(id int) (*n5model.TrafficPolicyRule, error) {
 	return s.updateRuleEnabled(id, false)
+}
+
+func (s *TrafficPolicyService) EnableRuleFromAdvanced(id int) (*n5model.TrafficPolicyRule, error) {
+	if _, err := s.ensureRulePolicyOrdinary(id, 0); err != nil {
+		return nil, err
+	}
+	return s.EnableRule(id)
+}
+
+func (s *TrafficPolicyService) DisableRuleFromAdvanced(id int) (*n5model.TrafficPolicyRule, error) {
+	if _, err := s.ensureRulePolicyOrdinary(id, 0); err != nil {
+		return nil, err
+	}
+	return s.DisableRule(id)
 }
 
 func (s *TrafficPolicyService) updateRuleEnabled(id int, enabled bool) (*n5model.TrafficPolicyRule, error) {
@@ -352,8 +472,19 @@ func (s *TrafficPolicyService) ReorderRules(policyId int, ruleIds []int) error {
 	})
 }
 
+func (s *TrafficPolicyService) ReorderRulesFromAdvanced(policyId int, ruleIds []int) error {
+	if err := s.ensurePolicyOrdinary(policyId); err != nil {
+		return err
+	}
+	return s.ReorderRules(policyId, ruleIds)
+}
+
 func (s *TrafficPolicyService) BindInboundPolicy(inboundId int, policyId int) (*n5model.TrafficPolicyBinding, error) {
 	return s.RebindInboundPolicy(inboundId, policyId)
+}
+
+func (s *TrafficPolicyService) BindInboundPolicyFromAdvanced(inboundId int, policyId int) (*n5model.TrafficPolicyBinding, error) {
+	return s.RebindInboundPolicyFromAdvanced(inboundId, policyId)
 }
 
 func (s *TrafficPolicyService) RebindInboundPolicy(inboundId int, policyId int) (*n5model.TrafficPolicyBinding, error) {
@@ -389,6 +520,16 @@ func (s *TrafficPolicyService) RebindInboundPolicy(inboundId int, policyId int) 
 	return record, nil
 }
 
+func (s *TrafficPolicyService) RebindInboundPolicyFromAdvanced(inboundId int, policyId int) (*n5model.TrafficPolicyBinding, error) {
+	if err := s.ensurePolicyOrdinary(policyId); err != nil {
+		return nil, err
+	}
+	if err := s.ensureInboundBindingOrdinary(inboundId); err != nil {
+		return nil, err
+	}
+	return s.RebindInboundPolicy(inboundId, policyId)
+}
+
 func (s *TrafficPolicyService) UnbindInboundPolicy(inboundId int) error {
 	if inboundId <= 0 {
 		return common.NewError("invalid inbound id")
@@ -397,6 +538,28 @@ func (s *TrafficPolicyService) UnbindInboundPolicy(inboundId int) error {
 		return err
 	}
 	return database.GetDB().Where("inbound_id = ?", inboundId).Delete(&n5model.TrafficPolicyBinding{}).Error
+}
+
+func (s *TrafficPolicyService) UnbindInboundPolicyFromAdvanced(inboundId int) error {
+	if err := s.ensureInboundBindingOrdinary(inboundId); err != nil {
+		return err
+	}
+	return s.UnbindInboundPolicy(inboundId)
+}
+
+func (s *TrafficPolicyService) ensureInboundBindingOrdinary(inboundId int) error {
+	if inboundId <= 0 {
+		return common.NewError("invalid inbound id")
+	}
+	binding := &n5model.TrafficPolicyBinding{}
+	err := database.GetDB().Model(&n5model.TrafficPolicyBinding{}).Where("inbound_id = ?", inboundId).First(binding).Error
+	if database.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.ensurePolicyOrdinary(binding.PolicyId)
 }
 
 func (s *TrafficPolicyService) ListBindings() ([]*n5model.TrafficPolicyBinding, error) {

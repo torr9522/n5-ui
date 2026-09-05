@@ -464,3 +464,169 @@ func TestTrafficPolicyServiceRejectsRemarkTransitionForSimpleManagedPolicy(t *te
 		t.Fatalf("unexpected update error: %v", err)
 	}
 }
+
+func TestTrafficPolicyServiceAdvancedMethodsProtectSimpleManagedState(t *testing.T) {
+	initTestDB(t)
+
+	egressSvc := &EgressService{}
+	policySvc := &TrafficPolicyService{}
+	egress := createTrafficTestEgress(t, egressSvc, "advanced-protect-egress")
+	inboundSimple := createTrafficTestInbound(t, 34151, "advanced-protect-simple")
+	inboundOrdinary := createTrafficTestInbound(t, 34152, "advanced-protect-ordinary")
+
+	simplePolicy, err := policySvc.Create(&n5model.TrafficPolicy{
+		Name:              "simple-managed-policy",
+		Remark:            "n5-simple-exec|eyJ2ZXJzaW9uIjoxLCJpdGVtcyI6W119",
+		Enabled:           true,
+		DefaultTargetType: targetTypeEgress,
+		DefaultTargetId:   egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create simple policy failed: %v", err)
+	}
+	simpleRule, err := policySvc.AddRule(&n5model.TrafficPolicyRule{
+		PolicyId:   simplePolicy.Id,
+		RuleType:   ruleTypeDomain,
+		MatchMode:  domainModeExact,
+		MatchValue: "simple.example.com",
+		TargetType: targetTypeEgress,
+		TargetId:   egress.Id,
+		Enabled:    true,
+	})
+	if err != nil {
+		t.Fatalf("create simple rule failed: %v", err)
+	}
+	if _, err := policySvc.BindInboundPolicy(inboundSimple.Id, simplePolicy.Id); err != nil {
+		t.Fatalf("bind simple policy failed: %v", err)
+	}
+
+	ordinaryPolicy, err := policySvc.CreatePolicyFromAdvanced(&n5model.TrafficPolicy{
+		Name:              "ordinary-policy",
+		Remark:            "ordinary-advanced",
+		Enabled:           true,
+		DefaultTargetType: targetTypeEgress,
+		DefaultTargetId:   egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create ordinary policy via advanced failed: %v", err)
+	}
+	ordinaryRule, err := policySvc.AddRuleFromAdvanced(&n5model.TrafficPolicyRule{
+		PolicyId:   ordinaryPolicy.Id,
+		RuleType:   ruleTypeDomain,
+		MatchMode:  domainModeExact,
+		MatchValue: "ordinary.example.com",
+		TargetType: targetTypeEgress,
+		TargetId:   egress.Id,
+		Enabled:    true,
+	})
+	if err != nil {
+		t.Fatalf("create ordinary rule via advanced failed: %v", err)
+	}
+	if _, err := policySvc.BindInboundPolicyFromAdvanced(inboundOrdinary.Id, ordinaryPolicy.Id); err != nil {
+		t.Fatalf("bind ordinary policy via advanced failed: %v", err)
+	}
+
+	expectSimpleManagedReject := func(name string, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "N5 简易出口规则管理") {
+			t.Fatalf("%s: expected simple-managed rejection, got %v", name, err)
+		}
+	}
+
+	_, err = policySvc.CreatePolicyFromAdvanced(&n5model.TrafficPolicy{Name: "fake-simple", Remark: simpleManagedExecRemarkPrefix + "e30=", Enabled: true})
+	expectSimpleManagedReject("create fake simple policy", err)
+	_, err = policySvc.UpdatePolicyFromAdvanced(&n5model.TrafficPolicy{
+		Id:                simplePolicy.Id,
+		Name:              "simple-updated",
+		Remark:            simplePolicy.Remark,
+		Enabled:           true,
+		DefaultTargetType: targetTypeEgress,
+		DefaultTargetId:   egress.Id,
+	})
+	expectSimpleManagedReject("update simple policy", err)
+	_, err = policySvc.DisablePolicyFromAdvanced(simplePolicy.Id)
+	expectSimpleManagedReject("disable simple policy", err)
+	_, err = policySvc.EnablePolicyFromAdvanced(simplePolicy.Id)
+	expectSimpleManagedReject("enable simple policy", err)
+	err = policySvc.DeletePolicyFromAdvanced(simplePolicy.Id)
+	expectSimpleManagedReject("delete simple policy", err)
+	_, err = policySvc.AddRuleFromAdvanced(&n5model.TrafficPolicyRule{
+		PolicyId:   simplePolicy.Id,
+		RuleType:   ruleTypeDomain,
+		MatchMode:  domainModeExact,
+		MatchValue: "new-simple.example.com",
+		TargetType: targetTypeEgress,
+		TargetId:   egress.Id,
+		Enabled:    true,
+	})
+	expectSimpleManagedReject("add simple rule", err)
+	_, err = policySvc.UpdateRuleFromAdvanced(&n5model.TrafficPolicyRule{
+		Id:         simpleRule.Id,
+		RuleType:   ruleTypeDomain,
+		MatchMode:  domainModeKeyword,
+		MatchValue: "changed",
+		TargetType: targetTypeEgress,
+		TargetId:   egress.Id,
+	})
+	expectSimpleManagedReject("update simple rule", err)
+	_, err = policySvc.DisableRuleFromAdvanced(simpleRule.Id)
+	expectSimpleManagedReject("disable simple rule", err)
+	_, err = policySvc.EnableRuleFromAdvanced(simpleRule.Id)
+	expectSimpleManagedReject("enable simple rule", err)
+	err = policySvc.DeleteRuleFromAdvanced(simpleRule.Id)
+	expectSimpleManagedReject("delete simple rule", err)
+	err = policySvc.ReorderRulesFromAdvanced(simplePolicy.Id, []int{simpleRule.Id})
+	expectSimpleManagedReject("reorder simple rules", err)
+	_, err = policySvc.RebindInboundPolicyFromAdvanced(inboundOrdinary.Id, simplePolicy.Id)
+	expectSimpleManagedReject("rebind to simple policy", err)
+	_, err = policySvc.RebindInboundPolicyFromAdvanced(inboundSimple.Id, ordinaryPolicy.Id)
+	expectSimpleManagedReject("rebind simple inbound", err)
+	err = policySvc.UnbindInboundPolicyFromAdvanced(inboundSimple.Id)
+	expectSimpleManagedReject("unbind simple inbound", err)
+
+	updatedOrdinaryRule, err := policySvc.UpdateRuleFromAdvanced(&n5model.TrafficPolicyRule{
+		Id:         ordinaryRule.Id,
+		PolicyId:   ordinaryPolicy.Id,
+		RuleType:   ruleTypeDomain,
+		MatchMode:  domainModeKeyword,
+		MatchValue: "ordinary-updated",
+		TargetType: targetTypeEgress,
+		TargetId:   egress.Id,
+		SortOrder:  1,
+	})
+	if err != nil {
+		t.Fatalf("update ordinary rule via advanced failed: %v", err)
+	}
+	if updatedOrdinaryRule.MatchValue != "ordinary-updated" {
+		t.Fatalf("ordinary rule was not updated: %#v", updatedOrdinaryRule)
+	}
+	if _, err := policySvc.UpdateRuleFromAdvanced(&n5model.TrafficPolicyRule{
+		Id:         simpleRule.Id,
+		PolicyId:   ordinaryPolicy.Id,
+		RuleType:   ruleTypeDomain,
+		MatchMode:  domainModeKeyword,
+		MatchValue: "cross-policy",
+		TargetType: targetTypeEgress,
+		TargetId:   egress.Id,
+	}); err == nil || !strings.Contains(err.Error(), "rule not found in policy") {
+		t.Fatalf("expected cross-policy rule rejection, got %v", err)
+	}
+	if err := policySvc.UnbindInboundPolicyFromAdvanced(inboundOrdinary.Id); err != nil {
+		t.Fatalf("unbind ordinary inbound via advanced failed: %v", err)
+	}
+
+	var simpleRuleCount int64
+	if err := database.GetDB().Model(&n5model.TrafficPolicyRule{}).Where("id = ?", simpleRule.Id).Count(&simpleRuleCount).Error; err != nil {
+		t.Fatalf("count simple rule failed: %v", err)
+	}
+	if simpleRuleCount != 1 {
+		t.Fatalf("simple rule was mutated or deleted")
+	}
+	var simpleBindingCount int64
+	if err := database.GetDB().Model(&n5model.TrafficPolicyBinding{}).Where("inbound_id = ? and policy_id = ?", inboundSimple.Id, simplePolicy.Id).Count(&simpleBindingCount).Error; err != nil {
+		t.Fatalf("count simple binding failed: %v", err)
+	}
+	if simpleBindingCount != 1 {
+		t.Fatalf("simple binding was mutated or deleted")
+	}
+}

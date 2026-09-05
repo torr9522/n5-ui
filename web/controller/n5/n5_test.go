@@ -215,31 +215,111 @@ func TestTrafficPolicyAPIBlocksSimpleManagedRemarkMutation(t *testing.T) {
 	initControllerTestDB(t)
 	engine := newTestEngine(t)
 
+	egressSvc := &n5service.EgressService{}
+	egress, err := egressSvc.Create(&n5model.Egress{
+		Name:         "api-simple-protect-egress",
+		Protocol:     "freedom",
+		Enabled:      true,
+		OutboundJSON: `{"protocol":"freedom","settings":{}}`,
+	})
+	if err != nil {
+		t.Fatalf("create egress failed: %v", err)
+	}
+	inbound := &model.Inbound{
+		UserId:         1,
+		Remark:         "api-simple-protect-inbound",
+		Enable:         true,
+		Listen:         "0.0.0.0",
+		Port:           32008,
+		Protocol:       model.Socks,
+		Settings:       `{"auth":"noauth","udp":false,"ip":"127.0.0.1"}`,
+		StreamSettings: `{}`,
+		Tag:            "api-simple-protect-inbound-tag",
+		Sniffing:       `{}`,
+	}
+	if err := database.GetDB().Create(inbound).Error; err != nil {
+		t.Fatalf("create inbound failed: %v", err)
+	}
+	ordinaryInbound := &model.Inbound{
+		UserId:         1,
+		Remark:         "api-ordinary-inbound",
+		Enable:         true,
+		Listen:         "0.0.0.0",
+		Port:           32009,
+		Protocol:       model.Socks,
+		Settings:       `{"auth":"noauth","udp":false,"ip":"127.0.0.1"}`,
+		StreamSettings: `{}`,
+		Tag:            "api-ordinary-inbound-tag",
+		Sniffing:       `{}`,
+	}
+	if err := database.GetDB().Create(ordinaryInbound).Error; err != nil {
+		t.Fatalf("create ordinary inbound failed: %v", err)
+	}
 	policySvc := &n5service.TrafficPolicyService{}
 	policy, err := policySvc.Create(&n5model.TrafficPolicy{
-		Name:    "simple-managed-policy",
-		Remark:  "n5-simple-exec|eyJ2ZXJzaW9uIjoxLCJpdGVtcyI6W119",
-		Enabled: true,
+		Name:              "simple-managed-policy",
+		Remark:            "n5-simple-exec|eyJ2ZXJzaW9uIjoxLCJpdGVtcyI6W119",
+		Enabled:           true,
+		DefaultTargetType: "egress",
+		DefaultTargetId:   egress.Id,
 	})
 	if err != nil {
 		t.Fatalf("create policy failed: %v", err)
 	}
+	rule, err := policySvc.AddRule(&n5model.TrafficPolicyRule{
+		PolicyId:   policy.Id,
+		RuleType:   "domain",
+		MatchMode:  "exact",
+		MatchValue: "simple-api.example.com",
+		TargetType: "egress",
+		TargetId:   egress.Id,
+		Enabled:    true,
+	})
+	if err != nil {
+		t.Fatalf("create simple rule failed: %v", err)
+	}
+	if _, err := policySvc.BindInboundPolicy(inbound.Id, policy.Id); err != nil {
+		t.Fatalf("bind simple policy failed: %v", err)
+	}
+	ordinaryPolicy, err := policySvc.Create(&n5model.TrafficPolicy{
+		Name:              "ordinary-api-policy",
+		Remark:            "ordinary",
+		Enabled:           true,
+		DefaultTargetType: "egress",
+		DefaultTargetId:   egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create ordinary policy failed: %v", err)
+	}
 
-	clearRestartFlag()
-	updateBody := bytes.NewBufferString(`{"name":"simple-managed-policy-updated","remark":"ordinary-remark","enabled":true}`)
-	updateReq, _ := http.NewRequest(http.MethodPost, "/n5/api/traffic-policy/update/"+strconv.Itoa(policy.Id), updateBody)
-	updateReq.Header.Set("Content-Type", "application/json")
-	updateResp := httptest.NewRecorder()
-	engine.ServeHTTP(updateResp, updateReq)
-	if updateResp.Code != http.StatusOK {
-		t.Fatalf("unexpected update status: %d", updateResp.Code)
+	postAndExpectBlocked := func(name, path, body string) {
+		t.Helper()
+		clearRestartFlag()
+		req, _ := http.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		engine.ServeHTTP(resp, req)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("%s: unexpected status: %d", name, resp.Code)
+		}
+		if !bytes.Contains(resp.Body.Bytes(), []byte(`"success":false`)) || !bytes.Contains(resp.Body.Bytes(), []byte(`N5 简易出口规则管理`)) {
+			t.Fatalf("%s: unexpected blocked response: %s", name, resp.Body.String())
+		}
+		if (&coreservice.XrayService{}).IsNeedRestartAndSetFalse() {
+			t.Fatalf("%s: blocked request should not trigger restart", name)
+		}
 	}
-	if !bytes.Contains(updateResp.Body.Bytes(), []byte(`"success":false`)) || !bytes.Contains(updateResp.Body.Bytes(), []byte(`Simple 出口规则管理`)) {
-		t.Fatalf("unexpected blocked update response: %s", updateResp.Body.String())
-	}
-	if (&coreservice.XrayService{}).IsNeedRestartAndSetFalse() {
-		t.Fatal("blocked update should not trigger restart")
-	}
+
+	postAndExpectBlocked("update policy", "/n5/api/traffic-policy/update/"+strconv.Itoa(policy.Id), `{"name":"simple-managed-policy-updated","remark":"ordinary-remark","enabled":true}`)
+	postAndExpectBlocked("delete policy", "/n5/api/traffic-policy/del/"+strconv.Itoa(policy.Id), `{}`)
+	postAndExpectBlocked("disable policy", "/n5/api/traffic-policy/disable/"+strconv.Itoa(policy.Id), `{}`)
+	postAndExpectBlocked("add rule", "/n5/api/traffic-policy/rule/add", `{"policyId":`+strconv.Itoa(policy.Id)+`,"ruleType":"domain","matchMode":"exact","matchValue":"blocked.example.com","targetType":"egress","targetId":`+strconv.Itoa(egress.Id)+`,"enabled":true}`)
+	postAndExpectBlocked("update rule", "/n5/api/traffic-policy/rule/update/"+strconv.Itoa(rule.Id), `{"ruleType":"domain","matchMode":"keyword","matchValue":"blocked","targetType":"egress","targetId":`+strconv.Itoa(egress.Id)+`}`)
+	postAndExpectBlocked("delete rule", "/n5/api/traffic-policy/rule/del/"+strconv.Itoa(rule.Id), `{}`)
+	postAndExpectBlocked("reorder rules", "/n5/api/traffic-policy/rule/reorder", `{"policyId":`+strconv.Itoa(policy.Id)+`,"ruleIds":[`+strconv.Itoa(rule.Id)+`]}`)
+	postAndExpectBlocked("unbind simple", "/n5/api/traffic-policy/unbind", `{"inboundId":`+strconv.Itoa(inbound.Id)+`}`)
+	postAndExpectBlocked("rebind simple inbound", "/n5/api/traffic-policy/rebind", `{"inboundId":`+strconv.Itoa(inbound.Id)+`,"policyId":`+strconv.Itoa(ordinaryPolicy.Id)+`}`)
+	postAndExpectBlocked("bind simple target", "/n5/api/traffic-policy/bind", `{"inboundId":`+strconv.Itoa(ordinaryInbound.Id)+`,"policyId":`+strconv.Itoa(policy.Id)+`}`)
 }
 
 func TestTrafficTemplateAPIResponses(t *testing.T) {

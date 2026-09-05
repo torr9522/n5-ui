@@ -3,9 +3,7 @@ package n5
 import (
 	"github.com/gin-gonic/gin"
 	"strconv"
-	"strings"
 	n5model "x-ui/database/model/n5"
-	"x-ui/util/common"
 	coreservice "x-ui/web/service"
 	n5service "x-ui/web/service/n5"
 )
@@ -81,7 +79,7 @@ func (a *TrafficPolicyController) add(c *gin.Context) {
 		jsonMsg(c, "add traffic policy", err)
 		return
 	}
-	created, err := a.policyService.Create(record)
+	created, err := a.policyService.CreatePolicyFromAdvanced(record)
 	if err != nil {
 		jsonMsg(c, "add traffic policy", err)
 		return
@@ -115,16 +113,7 @@ func (a *TrafficPolicyController) update(c *gin.Context) {
 		jsonMsg(c, "update traffic policy", err)
 		return
 	}
-	current, err := a.policyService.GetPolicy(id)
-	if err != nil {
-		jsonMsg(c, "update traffic policy", err)
-		return
-	}
-	if isSimpleManagedTrafficPolicyUpdateBlocked(current, record) {
-		jsonMsg(c, "update traffic policy", common.NewError("该策略由 Simple 出口规则管理，请在出口规则页面修改"))
-		return
-	}
-	updated, err := a.policyService.UpdatePolicy(record)
+	updated, err := a.policyService.UpdatePolicyFromAdvanced(record)
 	if err != nil {
 		jsonMsg(c, "update traffic policy", err)
 		return
@@ -139,7 +128,7 @@ func (a *TrafficPolicyController) del(c *gin.Context) {
 		jsonMsg(c, "delete traffic policy", err)
 		return
 	}
-	delErr := a.policyService.DeletePolicy(id)
+	delErr := a.policyService.DeletePolicyFromAdvanced(id)
 	if delErr == nil {
 		a.getXrayService().SetToNeedRestart()
 	}
@@ -152,7 +141,7 @@ func (a *TrafficPolicyController) enable(c *gin.Context) {
 		jsonMsg(c, "enable traffic policy", err)
 		return
 	}
-	record, err := a.policyService.EnablePolicy(id)
+	record, err := a.policyService.EnablePolicyFromAdvanced(id)
 	if err != nil {
 		jsonMsg(c, "enable traffic policy", err)
 		return
@@ -167,7 +156,7 @@ func (a *TrafficPolicyController) disable(c *gin.Context) {
 		jsonMsg(c, "disable traffic policy", err)
 		return
 	}
-	record, err := a.policyService.DisablePolicy(id)
+	record, err := a.policyService.DisablePolicyFromAdvanced(id)
 	if err != nil {
 		jsonMsg(c, "disable traffic policy", err)
 		return
@@ -196,7 +185,7 @@ func (a *TrafficPolicyController) addRule(c *gin.Context) {
 		jsonMsg(c, "add traffic rule", err)
 		return
 	}
-	created, err := a.policyService.AddRule(record)
+	created, err := a.policyService.AddRuleFromAdvanced(record)
 	if err != nil {
 		jsonMsg(c, "add traffic rule", err)
 		return
@@ -216,7 +205,7 @@ func (a *TrafficPolicyController) updateRule(c *gin.Context) {
 		jsonMsg(c, "update traffic rule", err)
 		return
 	}
-	updated, err := a.policyService.UpdateRule(record)
+	updated, err := a.policyService.UpdateRuleFromAdvanced(record)
 	if err != nil {
 		jsonMsg(c, "update traffic rule", err)
 		return
@@ -231,7 +220,7 @@ func (a *TrafficPolicyController) delRule(c *gin.Context) {
 		jsonMsg(c, "delete traffic rule", err)
 		return
 	}
-	err = a.policyService.DeleteRule(id)
+	err = a.policyService.DeleteRuleFromAdvanced(id)
 	if err == nil {
 		a.getXrayService().SetToNeedRestart()
 	}
@@ -244,7 +233,7 @@ func (a *TrafficPolicyController) enableRule(c *gin.Context) {
 		jsonMsg(c, "enable traffic rule", err)
 		return
 	}
-	record, err := a.policyService.EnableRule(id)
+	record, err := a.policyService.EnableRuleFromAdvanced(id)
 	if err != nil {
 		jsonMsg(c, "enable traffic rule", err)
 		return
@@ -259,7 +248,7 @@ func (a *TrafficPolicyController) disableRule(c *gin.Context) {
 		jsonMsg(c, "disable traffic rule", err)
 		return
 	}
-	record, err := a.policyService.DisableRule(id)
+	record, err := a.policyService.DisableRuleFromAdvanced(id)
 	if err != nil {
 		jsonMsg(c, "disable traffic rule", err)
 		return
@@ -277,7 +266,7 @@ func (a *TrafficPolicyController) reorderRules(c *gin.Context) {
 		jsonMsg(c, "reorder traffic rules", err)
 		return
 	}
-	err := a.policyService.ReorderRules(payload.PolicyId, payload.RuleIds)
+	err := a.policyService.ReorderRulesFromAdvanced(payload.PolicyId, payload.RuleIds)
 	if err == nil {
 		a.getXrayService().SetToNeedRestart()
 	}
@@ -302,7 +291,7 @@ func (a *TrafficPolicyController) bind(c *gin.Context) {
 		jsonMsg(c, "bind traffic policy", err)
 		return
 	}
-	record, err := a.policyService.BindInboundPolicy(payload.InboundId, payload.PolicyId)
+	record, err := a.policyService.BindInboundPolicyFromAdvanced(payload.InboundId, payload.PolicyId)
 	if err != nil {
 		jsonMsg(c, "bind traffic policy", err)
 		return
@@ -319,7 +308,7 @@ func (a *TrafficPolicyController) unbind(c *gin.Context) {
 		jsonMsg(c, "unbind traffic policy", err)
 		return
 	}
-	err := a.policyService.UnbindInboundPolicy(payload.InboundId)
+	err := a.policyService.UnbindInboundPolicyFromAdvanced(payload.InboundId)
 	if err == nil {
 		a.getXrayService().SetToNeedRestart()
 	}
@@ -335,7 +324,7 @@ func (a *TrafficPolicyController) rebind(c *gin.Context) {
 		jsonMsg(c, "rebind traffic policy", err)
 		return
 	}
-	record, err := a.policyService.RebindInboundPolicy(payload.InboundId, payload.PolicyId)
+	record, err := a.policyService.RebindInboundPolicyFromAdvanced(payload.InboundId, payload.PolicyId)
 	if err != nil {
 		jsonMsg(c, "rebind traffic policy", err)
 		return
@@ -366,18 +355,4 @@ func (a *TrafficPolicyController) getXrayService() trafficRestartTrigger {
 		return a.xrayService
 	}
 	return &coreservice.XrayService{}
-}
-
-func isSimpleManagedTrafficPolicyUpdateBlocked(current *n5model.TrafficPolicy, next *n5model.TrafficPolicy) bool {
-	if current == nil || next == nil {
-		return false
-	}
-	remark := strings.TrimSpace(current.Remark)
-	if !strings.HasPrefix(remark, "n5-simple-exec|") && !strings.HasPrefix(remark, "n5-simple|") {
-		return false
-	}
-	return strings.TrimSpace(next.Name) != strings.TrimSpace(current.Name) ||
-		strings.TrimSpace(next.Remark) != strings.TrimSpace(current.Remark) ||
-		strings.TrimSpace(strings.ToLower(next.DefaultTargetType)) != strings.TrimSpace(strings.ToLower(current.DefaultTargetType)) ||
-		next.DefaultTargetId != current.DefaultTargetId
 }
