@@ -62,8 +62,8 @@
                     </a-row>
                     <a-row :gutter="12" v-if="form.trafficType === 'group'">
                         <a-col :xs="24" :sm="16">
-                            <a-form-item label="自定义规则组">
-                                <a-select v-model="form.groupId" style="width: 100%" placeholder="选择自定义规则组" :disabled="!!editingRuleId">
+                            <a-form-item label="规则组名称">
+                                <a-select v-model="form.groupId" style="width: 100%" placeholder="选择规则组名称" :disabled="!!editingRuleId">
                                     <a-select-option v-for="item in customGroups" :key="item.id" :value="item.id">
                                         [[ item.name ]] ([[ item.ruleCount ]])
                                     </a-select-option>
@@ -123,7 +123,7 @@
                     </a-table-column>
                     <a-table-column title="来源">
                         <template slot-scope="text, row">
-                            <span v-if="row.trafficType === 'group'">[[ row.groupName || '自定义规则组' ]]</span>
+                            <span v-if="row.trafficType === 'group'">[[ row.groupName || ruleGroupName(row.groupId) || '未命名规则组' ]]</span>
                             <span v-else-if="row.trafficType === 'custom-domain'">自定义</span>
                             <span v-else>[[ row.trafficLabel ]]</span>
                         </template>
@@ -286,6 +286,10 @@
             },
             ruleGroupPrefix(row) {
                 return row.groupType === 'custom' ? '自定义规则组' : '内置规则组';
+            },
+            ruleGroupName(groupId) {
+                const group = this.groups.find(item => item.id === groupId);
+                return group ? group.name : '';
             },
             buildSubmitPayload() {
                 const payload = Object.assign({}, this.form);
