@@ -78,6 +78,178 @@ func TestEgressServiceRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestEgressServiceDeleteProtectsReferences(t *testing.T) {
+	initTestDB(t)
+
+	egressSvc := &EgressService{}
+	policySvc := &TrafficPolicyService{}
+	poolSvc := &EgressPoolService{}
+
+	egress, err := egressSvc.Create(&n5model.Egress{
+		Name:         "protected-egress",
+		Protocol:     "freedom",
+		Enabled:      true,
+		OutboundJSON: freedomOutboundJSON(),
+	})
+	if err != nil {
+		t.Fatalf("create egress failed: %v", err)
+	}
+	freeEgress, err := egressSvc.Create(&n5model.Egress{
+		Name:         "free-egress",
+		Protocol:     "freedom",
+		Enabled:      true,
+		OutboundJSON: freedomOutboundJSON(),
+	})
+	if err != nil {
+		t.Fatalf("create free egress failed: %v", err)
+	}
+	if err := egressSvc.Delete(freeEgress.Id); err != nil {
+		t.Fatalf("delete unreferenced egress failed: %v", err)
+	}
+
+	assertDeleteRejected := func(name, want string) {
+		t.Helper()
+		err := egressSvc.Delete(egress.Id)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: unexpected delete error: %v", name, err)
+		}
+		var count int64
+		if err := database.GetDB().Model(&n5model.Egress{}).Where("id = ?", egress.Id).Count(&count).Error; err != nil {
+			t.Fatalf("%s: count egress failed: %v", name, err)
+		}
+		if count != 1 {
+			t.Fatalf("%s: referenced egress was deleted", name)
+		}
+	}
+
+	advancedDefault, err := policySvc.Create(&n5model.TrafficPolicy{
+		Name:              "advanced-default",
+		Remark:            "ordinary-advanced",
+		Enabled:           true,
+		DefaultTargetType: targetTypeEgress,
+		DefaultTargetId:   egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create advanced default policy failed: %v", err)
+	}
+	assertDeleteRejected("advanced default", "默认出口")
+	if err := database.GetDB().Delete(&n5model.TrafficPolicy{}, advancedDefault.Id).Error; err != nil {
+		t.Fatalf("cleanup advanced default failed: %v", err)
+	}
+
+	advancedRulePolicy, err := policySvc.Create(&n5model.TrafficPolicy{Name: "advanced-rule", Remark: "ordinary-advanced", Enabled: true})
+	if err != nil {
+		t.Fatalf("create advanced rule policy failed: %v", err)
+	}
+	advancedRule, err := policySvc.AddRule(&n5model.TrafficPolicyRule{
+		PolicyId:   advancedRulePolicy.Id,
+		RuleType:   ruleTypeDomain,
+		MatchMode:  domainModeExact,
+		MatchValue: "advanced.example.com",
+		TargetType: targetTypeEgress,
+		TargetId:   egress.Id,
+		Enabled:    true,
+	})
+	if err != nil {
+		t.Fatalf("create advanced rule failed: %v", err)
+	}
+	assertDeleteRejected("advanced rule", "出口规则使用")
+	if err := database.GetDB().Delete(&n5model.TrafficPolicyRule{}, advancedRule.Id).Error; err != nil {
+		t.Fatalf("cleanup advanced rule failed: %v", err)
+	}
+	if err := database.GetDB().Delete(&n5model.TrafficPolicy{}, advancedRulePolicy.Id).Error; err != nil {
+		t.Fatalf("cleanup advanced rule policy failed: %v", err)
+	}
+
+	simpleDefault, err := policySvc.Create(&n5model.TrafficPolicy{
+		Name:              "simple-default",
+		Remark:            "n5-simple-exec|eyJ2ZXJzaW9uIjoxLCJpdGVtcyI6W119",
+		Enabled:           true,
+		DefaultTargetType: targetTypeEgress,
+		DefaultTargetId:   egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create simple default policy failed: %v", err)
+	}
+	assertDeleteRejected("simple default", "默认出口")
+	if err := database.GetDB().Delete(&n5model.TrafficPolicy{}, simpleDefault.Id).Error; err != nil {
+		t.Fatalf("cleanup simple default failed: %v", err)
+	}
+
+	simpleRulePolicy, err := policySvc.Create(&n5model.TrafficPolicy{
+		Name:    "simple-rules",
+		Remark:  "n5-simple-exec|eyJ2ZXJzaW9uIjoxLCJpdGVtcyI6W119",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create simple rule policy failed: %v", err)
+	}
+	for _, item := range []struct {
+		name  string
+		value string
+	}{
+		{name: "custom group execution", value: "group.example.com"},
+		{name: "builtin execution", value: "builtin.example.com"},
+	} {
+		rule, err := policySvc.AddRule(&n5model.TrafficPolicyRule{
+			PolicyId:   simpleRulePolicy.Id,
+			RuleType:   ruleTypeDomain,
+			MatchMode:  domainModeExact,
+			MatchValue: item.value,
+			TargetType: targetTypeEgress,
+			TargetId:   egress.Id,
+			Enabled:    true,
+		})
+		if err != nil {
+			t.Fatalf("create %s rule failed: %v", item.name, err)
+		}
+		assertDeleteRejected(item.name, "出口规则使用")
+		if err := database.GetDB().Delete(&n5model.TrafficPolicyRule{}, rule.Id).Error; err != nil {
+			t.Fatalf("cleanup %s rule failed: %v", item.name, err)
+		}
+	}
+	if err := database.GetDB().Delete(&n5model.TrafficPolicy{}, simpleRulePolicy.Id).Error; err != nil {
+		t.Fatalf("cleanup simple rule policy failed: %v", err)
+	}
+
+	pool, err := poolSvc.Create(&n5model.EgressPool{Name: "protect-pool", Enabled: true})
+	if err != nil {
+		t.Fatalf("create pool failed: %v", err)
+	}
+	if _, err := poolSvc.AddMember(pool.Id, egress.Id, 1, 1); err != nil {
+		t.Fatalf("add pool member failed: %v", err)
+	}
+	assertDeleteRejected("pool member", "出口池")
+	if err := poolSvc.RemoveMember(pool.Id, egress.Id); err != nil {
+		t.Fatalf("remove pool member failed: %v", err)
+	}
+
+	if err := database.GetDB().Model(&n5model.EgressPool{}).Where("id = ?", pool.Id).Updates(map[string]interface{}{
+		"fallback_type":      targetTypeEgress,
+		"fallback_target_id": egress.Id,
+	}).Error; err != nil {
+		t.Fatalf("update pool fallback failed: %v", err)
+	}
+	assertDeleteRejected("pool fallback", "fallback")
+	if err := database.GetDB().Model(&n5model.EgressPool{}).Where("id = ?", pool.Id).Updates(map[string]interface{}{
+		"fallback_type":      "",
+		"fallback_target_id": 0,
+	}).Error; err != nil {
+		t.Fatalf("clear pool fallback failed: %v", err)
+	}
+
+	if err := egressSvc.Delete(egress.Id); err != nil {
+		t.Fatalf("delete after clearing references failed: %v", err)
+	}
+	var remaining int64
+	if err := database.GetDB().Model(&n5model.Egress{}).Where("id = ?", egress.Id).Count(&remaining).Error; err != nil {
+		t.Fatalf("count deleted egress failed: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected egress removed after references cleared, got %d", remaining)
+	}
+}
+
 func TestEgressPoolServiceMembers(t *testing.T) {
 	initTestDB(t)
 

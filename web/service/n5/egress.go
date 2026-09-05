@@ -161,7 +161,52 @@ func (s *EgressService) Delete(id int) error {
 	if id <= 0 {
 		return common.NewError("invalid egress id")
 	}
-	return database.GetDB().Delete(&n5model.Egress{}, id).Error
+	db := database.GetDB()
+	if err := s.ensureNotReferenced(db, id); err != nil {
+		return err
+	}
+	return db.Delete(&n5model.Egress{}, id).Error
+}
+
+func (s *EgressService) ensureNotReferenced(db *gorm.DB, id int) error {
+	var count int64
+	if err := db.Model(&n5model.TrafficPolicy{}).
+		Where("default_target_type = ? and default_target_id = ?", targetTypeEgress, id).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return common.NewError("该出口正在被出口规则默认出口使用，请先删除或修改相关规则")
+	}
+
+	if err := db.Model(&n5model.TrafficPolicyRule{}).
+		Where("target_type = ? and target_id = ?", targetTypeEgress, id).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return common.NewError("该出口正在被出口规则使用，请先删除或修改相关规则")
+	}
+
+	if err := db.Model(&n5model.EgressPoolMember{}).
+		Where("egress_id = ?", id).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return common.NewError("该出口仍属于出口池，请先从出口池移除")
+	}
+
+	if err := db.Model(&n5model.EgressPool{}).
+		Where("fallback_type = ? and fallback_target_id = ?", targetTypeEgress, id).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return common.NewError("该出口正在被出口池 fallback 使用，请先修改出口池 fallback")
+	}
+
+	return nil
 }
 
 func (s *EgressService) Get(id int) (*n5model.Egress, error) {
