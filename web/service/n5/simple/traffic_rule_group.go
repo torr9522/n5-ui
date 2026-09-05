@@ -65,6 +65,11 @@ type AddTrafficRuleDomainRequest struct {
 	Domain  string `json:"domain" form:"domain"`
 }
 
+type UpdateTrafficRuleDomainRequest struct {
+	GroupId int    `json:"groupId" form:"groupId"`
+	Domain  string `json:"domain" form:"domain"`
+}
+
 type TrafficRuleGroupService struct {
 	policyService trafficPolicyManager
 }
@@ -304,6 +309,33 @@ func (s *TrafficRuleGroupService) DeleteDomainRule(groupId int, ruleId int) erro
 	return database.GetDB().Delete(&n5model.TrafficPolicyRule{}, ruleId).Error
 }
 
+func (s *TrafficRuleGroupService) UpdateDomainRule(ruleId int, req *UpdateTrafficRuleDomainRequest) (*TrafficRuleGroupRule, error) {
+	if req == nil {
+		return nil, common.NewError("traffic rule request is nil")
+	}
+	if ruleId <= 0 || req.GroupId <= 0 {
+		return nil, common.NewError("invalid traffic rule id")
+	}
+	if _, _, err := s.getGroupPolicy(req.GroupId); err != nil {
+		return nil, err
+	}
+	record := &n5model.TrafficPolicyRule{}
+	if err := database.GetDB().Where("id = ? and policy_id = ?", ruleId, req.GroupId).First(record).Error; err != nil {
+		return nil, err
+	}
+	matchMode, matchValue, _, err := parseCustomDomainRule(req.Domain)
+	if err != nil {
+		return nil, err
+	}
+	record.RuleType = "domain"
+	record.MatchMode = matchMode
+	record.MatchValue = matchValue
+	if err := database.GetDB().Save(record).Error; err != nil {
+		return nil, err
+	}
+	return toTrafficRuleGroupRule(record), nil
+}
+
 func (s *TrafficRuleGroupService) EnableGroup(id int) (*TrafficRuleGroup, error) {
 	if _, _, err := s.getGroupPolicy(id); err != nil {
 		return nil, err
@@ -490,6 +522,8 @@ func formatTrafficRuleDisplayValue(matchMode string, matchValue string) string {
 		return "domain:" + matchValue
 	case "keyword":
 		return "keyword:" + matchValue
+	case "regexp":
+		return "regexp:" + matchValue
 	default:
 		return matchValue
 	}

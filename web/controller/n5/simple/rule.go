@@ -15,6 +15,7 @@ type ruleAPI interface {
 	CreateSimpleRule(req *simpleservice.CreateSimpleRuleRequest) (*simpleservice.SimpleRule, error)
 	UpdateSimpleRule(ruleId string, req *simpleservice.CreateSimpleRuleRequest) (*simpleservice.SimpleRule, error)
 	DeleteSimpleRule(ruleId string) error
+	CheckSimpleRuleConflicts(req *simpleservice.CreateSimpleRuleRequest, editingRuleId string) (*simpleservice.SimpleRuleConflictPreview, error)
 }
 
 type ruleRestartTrigger interface {
@@ -53,6 +54,7 @@ func (a *RuleController) initRouter(g *gin.RouterGroup) {
 	apiGroup.GET("/list", a.list)
 	apiGroup.POST("/add", a.add)
 	apiGroup.POST("/update", a.update)
+	apiGroup.POST("/conflicts", a.conflicts)
 	apiGroup.POST("/delete", a.del)
 	apiGroup.GET("/n5-status", a.n5Status)
 	apiGroup.POST("/n5-status", a.updateN5Status)
@@ -109,6 +111,23 @@ func (a *RuleController) update(c *gin.Context) {
 	}
 	a.getXrayService().SetToNeedRestart()
 	jsonObj(c, updated, nil)
+}
+
+func (a *RuleController) conflicts(c *gin.Context) {
+	payload := struct {
+		RuleId string `json:"ruleId" form:"ruleId"`
+		simpleservice.CreateSimpleRuleRequest
+	}{}
+	if err := c.ShouldBind(&payload); err != nil {
+		jsonMsg(c, "check simple rule conflicts", err)
+		return
+	}
+	preview, err := a.service.CheckSimpleRuleConflicts(&payload.CreateSimpleRuleRequest, payload.RuleId)
+	if err != nil {
+		jsonMsg(c, "check simple rule conflicts", err)
+		return
+	}
+	jsonObj(c, preview, nil)
 }
 
 func (a *RuleController) del(c *gin.Context) {

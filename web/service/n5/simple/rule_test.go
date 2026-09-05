@@ -655,6 +655,7 @@ func TestParseCustomDomainRule(t *testing.T) {
 		{name: "explicit domain keeps suffix match", input: "domain:openai.com", wantMode: "suffix", wantValue: "openai.com", wantDisplay: "domain:openai.com"},
 		{name: "explicit full keeps exact match", input: "full:openai.com", wantMode: "exact", wantValue: "openai.com", wantDisplay: "full:openai.com"},
 		{name: "keyword keeps keyword match", input: "keyword:openai", wantMode: "keyword", wantValue: "openai", wantDisplay: "keyword:openai"},
+		{name: "regexp keeps regexp match", input: `regexp:^(.+\.)?openai\.com$`, wantMode: "regexp", wantValue: `^(.+\.)?openai\.com$`, wantDisplay: `regexp:^(.+\.)?openai\.com$`},
 	}
 
 	for _, tt := range tests {
@@ -668,6 +669,297 @@ func TestParseCustomDomainRule(t *testing.T) {
 					tt.input, gotMode, gotValue, gotDisplay, tt.wantMode, tt.wantValue, tt.wantDisplay)
 			}
 		})
+	}
+}
+
+func TestParseCustomDomainRuleRejectsInvalidDomainInput(t *testing.T) {
+	tests := []string{
+		"",
+		"   ",
+		"https://example.com/path",
+		"http://example.com",
+		"example.com/path",
+		"example.com:443",
+		"example .com",
+		"keyword:bad value",
+		"regexp:[",
+	}
+	for _, input := range tests {
+		t.Run(input, func(t *testing.T) {
+			if _, _, _, err := parseCustomDomainRule(input); err == nil {
+				t.Fatalf("expected parseCustomDomainRule(%q) to fail", input)
+			}
+		})
+	}
+}
+
+func TestSimpleRuleServiceUpdateDirectCustomDomainChangesDomainAndKeepsSnapshot(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewRuleService()
+	groupSvc := NewTrafficRuleGroupService()
+	aiGroup, _ := mustGetBuiltinGroup(groupSvc, simpleTrafficAI)
+	sg := createTestRuleEgress(t, "sg-egress")
+	us := createTestRuleEgress(t, "us-egress")
+	inbound := createTestRuleInbound(t, 33140, "direct-custom-update-inbound")
+
+	if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, GroupId: aiGroup.Id, EgressId: us.Id}); err != nil {
+		t.Fatalf("create ai snapshot failed: %v", err)
+	}
+	before := mustExecutionItemSnapshot(t, svc, inbound.Id, simpleTrafficAI)
+
+	customRule, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "domain:example.com",
+		EgressId:     us.Id,
+	})
+	if err != nil {
+		t.Fatalf("create direct custom rule failed: %v", err)
+	}
+	updatedRule, err := svc.UpdateSimpleRule(customRule.RuleId, &CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "full:iana.org",
+		EgressId:     sg.Id,
+	})
+	if err != nil {
+		t.Fatalf("update direct custom rule failed: %v", err)
+	}
+
+	after := mustExecutionItemSnapshot(t, svc, inbound.Id, simpleTrafficAI)
+	if strings.Join(before, ",") != strings.Join(after, ",") {
+		t.Fatalf("ai snapshot changed after direct custom update: before=%v after=%v", before, after)
+	}
+	list := mustListSimpleRules(t, svc)
+	updated := findRuleByRuleID(list.Rules, updatedRule.RuleId)
+	if updated == nil || updated.CustomDomain != "full:iana.org" || updated.EgressId != sg.Id {
+		t.Fatalf("unexpected updated custom row: %#v", updated)
+	}
+	fragments, err := (&n5service.XrayExtService{}).GenerateRoutingFragments()
+	if err != nil {
+		t.Fatalf("generate routing fragments failed: %v", err)
+	}
+	assertSimpleRuleFragment(t, fragments, inbound.Tag, sg.Tag, "full:iana.org", true)
+	assertSimpleRuleFragment(t, fragments, inbound.Tag, us.Tag, "domain:example.com", false)
+	assertSimpleRuleFragment(t, fragments, inbound.Tag, us.Tag, "domain:openai.com", true)
+}
+
+func TestSimpleRuleServiceUpdateDirectCustomDomainRejectsDuplicate(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewRuleService()
+	egress := createTestRuleEgress(t, "egress")
+	inbound := createTestRuleInbound(t, 33141, "direct-custom-duplicate-inbound")
+
+	first, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "domain:example.com",
+		EgressId:     egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create first custom rule failed: %v", err)
+	}
+	second, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "domain:openai.com",
+		EgressId:     egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create second custom rule failed: %v", err)
+	}
+	if _, err := svc.UpdateSimpleRule(second.RuleId, &CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "domain:example.com",
+		EgressId:     egress.Id,
+	}); err == nil || !strings.Contains(err.Error(), "已存在该分流规则") {
+		t.Fatalf("expected duplicate custom update error, got %v; first=%s", err, first.RuleId)
+	}
+}
+
+func TestSimpleRoutingPriorityIgnoresCreationOrder(t *testing.T) {
+	cases := []struct {
+		name  string
+		steps []string
+	}{
+		{name: "builtin first", steps: []string{"all", "ai", "group", "suffix", "exact"}},
+		{name: "direct first", steps: []string{"exact", "suffix", "group", "ai", "all"}},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			initSimpleTestDB(t)
+
+			svc := NewRuleService()
+			groupSvc := NewTrafficRuleGroupService()
+			aiGroup, _ := mustGetBuiltinGroup(groupSvc, simpleTrafficAI)
+			customGroup, err := groupSvc.CreateGroup(&CreateTrafficRuleGroupRequest{
+				GroupType: simpleTrafficCustom,
+				Name:      "custom group",
+			})
+			if err != nil {
+				t.Fatalf("create custom group failed: %v", err)
+			}
+			if _, err := groupSvc.AddDomainRule(&AddTrafficRuleDomainRequest{GroupId: customGroup.Id, Domain: "domain:openai.com"}); err != nil {
+				t.Fatalf("add custom group domain failed: %v", err)
+			}
+			customGroup, err = groupSvc.GetGroup(customGroup.Id)
+			if err != nil {
+				t.Fatalf("reload custom group failed: %v", err)
+			}
+
+			all := createTestRuleEgress(t, "all-egress")
+			ai := createTestRuleEgress(t, "ai-egress")
+			group := createTestRuleEgress(t, "group-egress")
+			suffix := createTestRuleEgress(t, "suffix-egress")
+			exact := createTestRuleEgress(t, "exact-egress")
+			inbound := createTestRuleInbound(t, 33160, "priority-inbound")
+
+			for _, step := range tt.steps {
+				switch step {
+				case "all":
+					if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficAll, EgressId: all.Id}); err != nil {
+						t.Fatalf("create all failed: %v", err)
+					}
+				case "ai":
+					if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, GroupId: aiGroup.Id, EgressId: ai.Id}); err != nil {
+						t.Fatalf("create ai failed: %v", err)
+					}
+				case "group":
+					if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, GroupId: customGroup.Id, EgressId: group.Id}); err != nil {
+						t.Fatalf("create custom group failed: %v", err)
+					}
+				case "suffix":
+					if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficCustomDomain, CustomDomain: "domain:openai.com", EgressId: suffix.Id}); err != nil {
+						t.Fatalf("create suffix failed: %v", err)
+					}
+				case "exact":
+					if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficCustomDomain, CustomDomain: "full:api.openai.com", EgressId: exact.Id}); err != nil {
+						t.Fatalf("create exact failed: %v", err)
+					}
+				}
+			}
+
+			fragments, err := (&n5service.XrayExtService{}).GenerateRoutingFragments()
+			if err != nil {
+				t.Fatalf("generate routing fragments failed: %v", err)
+			}
+			got := inboundRoutingMatchersAndTargets(t, fragments, inbound.Tag)
+			want := []string{
+				"full:api.openai.com=>" + exact.Tag,
+				"domain:openai.com=>" + suffix.Tag,
+				"domain:openai.com=>" + group.Tag,
+				"domain:openai.com=>" + ai.Tag,
+			}
+			assertRoutingPrefix(t, got, want)
+			if got[len(got)-1] != "*=>"+all.Tag {
+				t.Fatalf("default route should be last: got=%v", got)
+			}
+		})
+	}
+}
+
+func TestSimpleConflictPreviewDetectsOverlapAndPriorityDirection(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewRuleService()
+	groupSvc := NewTrafficRuleGroupService()
+	aiGroup, _ := mustGetBuiltinGroup(groupSvc, simpleTrafficAI)
+	all := createTestRuleEgress(t, "all-egress")
+	ai := createTestRuleEgress(t, "ai-egress")
+	custom := createTestRuleEgress(t, "custom-egress")
+	inbound := createTestRuleInbound(t, 33161, "conflict-preview-inbound")
+
+	if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficAll, EgressId: all.Id}); err != nil {
+		t.Fatalf("create all failed: %v", err)
+	}
+	if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, GroupId: aiGroup.Id, EgressId: ai.Id}); err != nil {
+		t.Fatalf("create ai failed: %v", err)
+	}
+
+	preview, err := svc.CheckSimpleRuleConflicts(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "full:api.openai.com",
+		EgressId:     custom.Id,
+	}, "")
+	if err != nil {
+		t.Fatalf("preview exact/suffix failed: %v", err)
+	}
+	if !preview.HasConflict || !strings.Contains(preview.Warning, "AI分流") || !strings.Contains(preview.Warning, "当前规则优先级更高") {
+		t.Fatalf("unexpected exact/suffix preview: %#v", preview)
+	}
+
+	preview, err = svc.CheckSimpleRuleConflicts(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "keyword:openai",
+		EgressId:     custom.Id,
+	}, "")
+	if err != nil {
+		t.Fatalf("preview keyword failed: %v", err)
+	}
+	if !preview.HasConflict || !strings.Contains(preview.Warning, "关键词规则可能") {
+		t.Fatalf("unexpected keyword preview: %#v", preview)
+	}
+
+	preview, err = svc.CheckSimpleRuleConflicts(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "regexp:.*openai.*",
+		EgressId:     custom.Id,
+	}, "")
+	if err != nil {
+		t.Fatalf("preview regexp failed: %v", err)
+	}
+	if !preview.HasConflict || !strings.Contains(preview.Warning, "正则表达式规则") {
+		t.Fatalf("unexpected regexp preview: %#v", preview)
+	}
+
+	preview, err = svc.CheckSimpleRuleConflicts(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "domain:example.org",
+		EgressId:     custom.Id,
+	}, "")
+	if err != nil {
+		t.Fatalf("preview no conflict failed: %v", err)
+	}
+	if preview.HasConflict {
+		t.Fatalf("unexpected no-conflict preview: %#v", preview)
+	}
+}
+
+func TestSimpleConflictPreviewExcludesEditedItem(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewRuleService()
+	egress := createTestRuleEgress(t, "egress")
+	inbound := createTestRuleInbound(t, 33162, "conflict-edit-inbound")
+
+	rule, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "domain:example.com",
+		EgressId:     egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create custom failed: %v", err)
+	}
+	preview, err := svc.CheckSimpleRuleConflicts(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "domain:example.com",
+		EgressId:     egress.Id,
+	}, rule.RuleId)
+	if err != nil {
+		t.Fatalf("preview edit failed: %v", err)
+	}
+	if preview.HasConflict {
+		t.Fatalf("edit item should not conflict with itself: %#v", preview)
 	}
 }
 
@@ -893,5 +1185,37 @@ func assertDefaultRoute(t *testing.T, fragments map[string]interface{}, inboundT
 	}
 	if !expect && found {
 		t.Fatalf("unexpected default route found: inbound=%s outbound=%s", inboundTag, outboundTag)
+	}
+}
+
+func inboundRoutingMatchersAndTargets(t *testing.T, fragments map[string]interface{}, inboundTag string) []string {
+	t.Helper()
+	result := make([]string, 0)
+	for _, rule := range inboundRoutingRules(t, fragments, inboundTag) {
+		matcher := "*"
+		if domains, _ := rule["domain"].([]interface{}); len(domains) > 0 {
+			matcher, _ = domains[0].(string)
+		}
+		if ips, _ := rule["ip"].([]interface{}); len(ips) > 0 {
+			matcher, _ = ips[0].(string)
+		}
+		tag, _ := rule["outboundTag"].(string)
+		if tag == "" {
+			tag, _ = rule["balancerTag"].(string)
+		}
+		result = append(result, matcher+"=>"+tag)
+	}
+	return result
+}
+
+func assertRoutingPrefix(t *testing.T, got []string, want []string) {
+	t.Helper()
+	if len(got) < len(want) {
+		t.Fatalf("routing too short: got=%v want-prefix=%v", got, want)
+	}
+	for index, expected := range want {
+		if got[index] != expected {
+			t.Fatalf("unexpected routing order at %d: got=%v want-prefix=%v", index, got, want)
+		}
 	}
 }

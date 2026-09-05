@@ -46,6 +46,10 @@ func (f *fakeTrafficRuleGroupService) AddDomainRule(req *simpleservice.AddTraffi
 	return &simpleservice.TrafficRuleGroupRule{Id: 11, DisplayValue: req.Domain, Enabled: true}, nil
 }
 
+func (f *fakeTrafficRuleGroupService) UpdateDomainRule(ruleId int, req *simpleservice.UpdateTrafficRuleDomainRequest) (*simpleservice.TrafficRuleGroupRule, error) {
+	return &simpleservice.TrafficRuleGroupRule{Id: ruleId, DisplayValue: req.Domain, Enabled: true}, nil
+}
+
 func (f *fakeTrafficRuleGroupService) DeleteDomainRule(groupId int, ruleId int) error {
 	return nil
 }
@@ -92,6 +96,13 @@ func TestTrafficRuleGroupPageRouteRender(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("unexpected status: %d", w.Code)
 	}
+
+	detail := httptest.NewRecorder()
+	detailReq, _ := http.NewRequest(http.MethodGet, "/n5/simple/traffic-rules/1", nil)
+	engine.ServeHTTP(detail, detailReq)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("unexpected detail status: %d", detail.Code)
+	}
 }
 
 func TestTrafficRuleGroupAPIResponses(t *testing.T) {
@@ -100,16 +111,16 @@ func TestTrafficRuleGroupAPIResponses(t *testing.T) {
 			{Id: 1, Name: "AI分流", GroupType: "ai", GroupLabel: "AI分流", KindLabel: "内置", Builtin: true, Enabled: true, RuleCount: 5, SnapshotCount: 1, DeleteHint: "该规则组已经生成过执行规则，删除不会影响已有运行规则"},
 		},
 		item: &simpleservice.TrafficRuleGroup{
-			Id:         1,
-			Name:       "AI分流",
-			GroupType:  "ai",
-			GroupLabel: "AI分流",
-			KindLabel:  "内置",
-			Builtin:    true,
-			Enabled:    true,
-			RuleCount:  5,
+			Id:            1,
+			Name:          "AI分流",
+			GroupType:     "ai",
+			GroupLabel:    "AI分流",
+			KindLabel:     "内置",
+			Builtin:       true,
+			Enabled:       true,
+			RuleCount:     5,
 			SnapshotCount: 1,
-			DeleteHint: "该规则组已经生成过执行规则，删除不会影响已有运行规则",
+			DeleteHint:    "该规则组已经生成过执行规则，删除不会影响已有运行规则",
 			Rules: []*simpleservice.TrafficRuleGroupRule{
 				{Id: 2, DisplayValue: "domain:openai.com", Enabled: true},
 			},
@@ -160,5 +171,16 @@ func TestTrafficRuleGroupAPIResponses(t *testing.T) {
 	}
 	if !bytes.Contains(ruleResp.Body.Bytes(), []byte(`"displayValue":"full:api64.ipify.org"`)) {
 		t.Fatalf("unexpected add rule body: %s", ruleResp.Body.String())
+	}
+
+	updateRuleResp := httptest.NewRecorder()
+	updateRuleReq, _ := http.NewRequest(http.MethodPost, "/n5/api/simple/traffic-rule/update/11", bytes.NewBufferString(`{"groupId":1,"domain":"domain:openai.com"}`))
+	updateRuleReq.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(updateRuleResp, updateRuleReq)
+	if updateRuleResp.Code != http.StatusOK {
+		t.Fatalf("unexpected update rule status: %d", updateRuleResp.Code)
+	}
+	if !bytes.Contains(updateRuleResp.Body.Bytes(), []byte(`"displayValue":"domain:openai.com"`)) {
+		t.Fatalf("unexpected update rule body: %s", updateRuleResp.Body.String())
 	}
 }

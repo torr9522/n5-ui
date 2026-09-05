@@ -24,6 +24,12 @@
                 </a-row>
             </a-card>
             <a-card title="添加出口规则">
+                <a-alert
+                    type="info"
+                    show-icon
+                    style="margin-bottom: 16px;"
+                    message="规则优先级：自定义域名 > 自定义规则组 > 内置分流 > 全部流量。自定义域名中，精确域名优先于域名及子域名，域名及子域名优先于域名关键词。">
+                </a-alert>
                 <a-form layout="vertical">
                     <a-row :gutter="12">
                         <a-col :xs="24" :sm="8">
@@ -56,23 +62,36 @@
                     </a-row>
                     <a-row :gutter="12" v-if="form.trafficType === 'group'">
                         <a-col :xs="24" :sm="16">
-                            <a-form-item label="分流规则组">
-                                <a-select v-model="form.groupId" style="width: 100%" placeholder="选择分流规则组" :disabled="!!editingRuleId">
-                                    <a-select-option v-for="item in groups" :key="item.id" :value="item.id">
+                            <a-form-item label="自定义规则组">
+                                <a-select v-model="form.groupId" style="width: 100%" placeholder="选择自定义规则组" :disabled="!!editingRuleId">
+                                    <a-select-option v-for="item in customGroups" :key="item.id" :value="item.id">
                                         [[ item.name ]] ([[ item.ruleCount ]])
                                     </a-select-option>
                                 </a-select>
                             </a-form-item>
                         </a-col>
                         <a-col :xs="24" :sm="8" style="display:flex;align-items:center;">
-                            <a-button style="margin-top: 6px" @click="openTrafficRules">管理分流规则</a-button>
+                            <a-button style="margin-top: 6px" @click="openTrafficRules">管理规则组</a-button>
                         </a-col>
                     </a-row>
                     <a-row :gutter="12" v-if="form.trafficType === 'custom-domain'">
-                        <a-col :xs="24" :sm="16">
-                            <a-form-item label="自定义域名">
-                                <a-input v-model.trim="form.customDomain" placeholder="支持 full:api.ipify.org / domain:openai.com / keyword:netflix" :disabled="!!editingRuleId"></a-input>
+                        <a-col :xs="24" :sm="8">
+                            <a-form-item label="匹配方式">
+                                <a-select v-model="form.customMatchMode" style="width: 100%">
+                                    <a-select-option value="suffix">域名及子域名</a-select-option>
+                                    <a-select-option value="exact">精确域名</a-select-option>
+                                    <a-select-option value="keyword">域名关键词</a-select-option>
+                                    <a-select-option value="regexp">正则表达式（高级）</a-select-option>
+                                </a-select>
                             </a-form-item>
+                        </a-col>
+                        <a-col :xs="24" :sm="16">
+                            <a-form-item label="域名">
+                                <a-input v-model.trim="form.customDomain" placeholder="example.com"></a-input>
+                            </a-form-item>
+                        </a-col>
+                        <a-col :xs="24">
+                            <a-alert type="info" show-icon :message="matchModeHelp(form.customMatchMode)"></a-alert>
                         </a-col>
                     </a-row>
                     <a-button v-if="!editingRuleId" type="primary" @click="createRule">添加</a-button>
@@ -95,16 +114,16 @@
                         <template slot-scope="text, row">
                             <span>[[ row.trafficLabel ]]</span>
                             <div v-if="row.groupName" style="color: rgba(0, 0, 0, 0.45); font-size: 12px;">
-                                规则组: [[ row.groupName ]]
+                                [[ ruleGroupPrefix(row) ]]：[[ row.groupName ]]
                             </div>
                             <div v-if="row.customDomain" style="color: rgba(0, 0, 0, 0.45); font-size: 12px;">
-                                [[ row.customDomain ]]
+                                [[ customDomainLabel(row.customDomain) ]]：[[ customDomainValue(row.customDomain) ]]
                             </div>
                         </template>
                     </a-table-column>
                     <a-table-column title="来源">
                         <template slot-scope="text, row">
-                            <span v-if="row.trafficType === 'group'">[[ row.groupName || '分流规则组' ]]</span>
+                            <span v-if="row.trafficType === 'group'">[[ row.groupName || '自定义规则组' ]]</span>
                             <span v-else-if="row.trafficType === 'custom-domain'">自定义</span>
                             <span v-else>[[ row.trafficLabel ]]</span>
                         </template>
@@ -139,6 +158,7 @@
         groupId: undefined,
         egressId: undefined,
         customDomain: '',
+        customMatchMode: 'suffix',
     });
 
     const app = new Vue({
@@ -155,6 +175,11 @@
             editingRuleId: '',
             n5Enabled: false,
             n5StatusLoading: false,
+        },
+        computed: {
+            customGroups() {
+                return (this.groups || []).filter(item => item.groupType === 'custom');
+            },
         },
         methods: {
             async loadN5Status() {
@@ -182,8 +207,8 @@
                 if (!this.form.egressId && this.egresses.length > 0) {
                     this.form.egressId = this.egresses[0].id;
                 }
-                if (!this.form.groupId && this.groups.length > 0) {
-                    this.form.groupId = this.groups[0].id;
+                if (!this.form.groupId && this.customGroups.length > 0) {
+                    this.form.groupId = this.customGroups[0].id;
                 }
             },
             resetForm() {
@@ -195,8 +220,8 @@
                 if (this.egresses.length > 0) {
                     this.form.egressId = this.egresses[0].id;
                 }
-                if (this.groups.length > 0) {
-                    this.form.groupId = this.groups[0].id;
+                if (this.customGroups.length > 0) {
+                    this.form.groupId = this.customGroups[0].id;
                 }
             },
             cancelEdit() {
@@ -210,19 +235,97 @@
                     trafficType: row.trafficType,
                     groupId: row.groupId || undefined,
                     egressId: row.egressId,
-                    customDomain: row.customDomain || '',
+                    customDomain: this.customDomainValue(row.customDomain || ''),
+                    customMatchMode: this.customDomainMode(row.customDomain || ''),
                 };
+            },
+            matchModeHelp(mode) {
+                if (mode === 'exact') {
+                    return '仅匹配当前完整域名。例如 example.com 只匹配 example.com，不会匹配 www.example.com 或 api.example.com。';
+                }
+                if (mode === 'keyword') {
+                    return '只要域名中包含该关键词即可匹配。例如 google 可匹配 google.com、googlevideo.com、accounts.google.com。';
+                }
+                if (mode === 'regexp') {
+                    return '使用正则表达式匹配域名，仅建议高级用户使用。';
+                }
+                return '匹配当前域名以及所有子域名。例如 example.com 会匹配 example.com、www.example.com、api.example.com。';
+            },
+            customDomainMode(value) {
+                if ((value || '').startsWith('full:')) {
+                    return 'exact';
+                }
+                if ((value || '').startsWith('keyword:')) {
+                    return 'keyword';
+                }
+                if ((value || '').startsWith('regexp:')) {
+                    return 'regexp';
+                }
+                return 'suffix';
+            },
+            customDomainValue(value) {
+                return (value || '').replace(/^(full|domain|keyword|regexp):/, '');
+            },
+            customDomainLabel(value) {
+                const labels = {
+                    exact: '精确域名',
+                    suffix: '域名及子域名',
+                    keyword: '域名关键词',
+                    regexp: '正则表达式',
+                };
+                return labels[this.customDomainMode(value)] || '域名及子域名';
+            },
+            customDomainPayload() {
+                const prefixes = {
+                    exact: 'full:',
+                    suffix: 'domain:',
+                    keyword: 'keyword:',
+                    regexp: 'regexp:',
+                };
+                return `${prefixes[this.form.customMatchMode] || 'domain:'}${this.form.customDomain}`;
+            },
+            ruleGroupPrefix(row) {
+                return row.groupType === 'custom' ? '自定义规则组' : '内置规则组';
+            },
+            buildSubmitPayload() {
+                const payload = Object.assign({}, this.form);
+                if (payload.trafficType === 'custom-domain') {
+                    payload.customDomain = this.customDomainPayload();
+                } else {
+                    payload.customDomain = '';
+                }
+                if (payload.trafficType !== 'group') {
+                    payload.groupId = 0;
+                }
+                return payload;
+            },
+            async confirmConflictIfNeeded(payload) {
+                if (!['custom-domain', 'group', 'ai', 'game', 'streaming'].includes(payload.trafficType)) {
+                    return true;
+                }
+                const checkPayload = Object.assign({}, payload, { ruleId: this.editingRuleId || '' });
+                const msg = await HttpUtil.post('/n5/api/simple/rule/conflicts', checkPayload);
+                if (!msg.success || !msg.obj || !msg.obj.hasConflict) {
+                    return msg.success;
+                }
+                return await new Promise((resolve) => {
+                    this.$confirm({
+                        title: '发现规则重叠',
+                        content: msg.obj.warning || '发现规则重叠，请确认保存后的优先级。',
+                        okText: '仍然保存',
+                        cancelText: '取消',
+                        onOk: () => resolve(true),
+                        onCancel: () => resolve(false),
+                    });
+                });
             },
             async createRule() {
                 if (this.editingRuleId) {
                     return;
                 }
-                const payload = Object.assign({}, this.form);
-                if (payload.trafficType !== 'custom-domain') {
-                    payload.customDomain = '';
-                }
-                if (payload.trafficType !== 'group') {
-                    payload.groupId = 0;
+                const payload = this.buildSubmitPayload();
+                if (!await this.confirmConflictIfNeeded(payload)) {
+                    return;
                 }
                 const msg = await HttpUtil.post('/n5/api/simple/rule/add', payload);
                 if (msg.success) {
@@ -235,12 +338,9 @@
                 if (!this.editingRuleId) {
                     return;
                 }
-                const payload = Object.assign({}, this.form, { ruleId: this.editingRuleId });
-                if (payload.trafficType !== 'custom-domain') {
-                    payload.customDomain = '';
-                }
-                if (payload.trafficType !== 'group') {
-                    payload.groupId = 0;
+                const payload = Object.assign(this.buildSubmitPayload(), { ruleId: this.editingRuleId });
+                if (!await this.confirmConflictIfNeeded(payload)) {
+                    return;
                 }
                 const msg = await HttpUtil.post('/n5/api/simple/rule/update', payload);
                 if (msg.success) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"x-ui/database"
 	legacyModel "x-ui/database/model"
@@ -27,6 +28,7 @@ const (
 	domainModeExact   = "exact"
 	domainModeSuffix  = "suffix"
 	domainModeKeyword = "keyword"
+	domainModeRegexp  = "regexp"
 
 	ipModeIP   = "ip"
 	ipModeCIDR = "cidr"
@@ -134,6 +136,11 @@ func validateDomainRule(mode, value string) error {
 	switch normalizeMatchMode(mode) {
 	case domainModeExact, domainModeSuffix, domainModeKeyword:
 		return nil
+	case domainModeRegexp:
+		if _, err := regexp.Compile(value); err != nil {
+			return common.NewErrorf("invalid regexp: %v", err)
+		}
+		return nil
 	default:
 		return common.NewError("invalid domain match mode")
 	}
@@ -173,6 +180,8 @@ func toDomainMatcher(mode, value string) string {
 		return "domain:" + value
 	case domainModeKeyword:
 		return "keyword:" + value
+	case domainModeRegexp:
+		return "regexp:" + value
 	default:
 		return value
 	}

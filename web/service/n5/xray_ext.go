@@ -1,7 +1,9 @@
 package n5
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"sort"
 	"strings"
 	"x-ui/database"
 	legacyModel "x-ui/database/model"
@@ -131,7 +133,7 @@ func (s *XrayExtService) GenerateRoutingFragments() (map[string]interface{}, err
 			continue
 		}
 
-		for _, rule := range ruleMap[policy.Id] {
+		for _, rule := range sortedRoutingRulesForPolicy(policy, ruleMap[policy.Id]) {
 			routingRule := map[string]interface{}{
 				"type":       "field",
 				"inboundTag": []string{inbound.Tag},
@@ -190,4 +192,166 @@ func (s *XrayExtService) GenerateRoutingFragments() (map[string]interface{}, err
 		return nil, err
 	}
 	return normalized, nil
+}
+
+const (
+	simpleExecRemarkPrefixForRouting = "n5-simple-exec|"
+
+	simpleRoutingTrafficGroup        = "group"
+	simpleRoutingTrafficCustomDomain = "custom-domain"
+	simpleRoutingGroupAI             = "ai"
+	simpleRoutingGroupGame           = "game"
+	simpleRoutingGroupStreaming      = "streaming"
+	simpleRoutingGroupCustom         = "custom"
+)
+
+type simpleRoutingExecutionRemark struct {
+	Version int                           `json:"version"`
+	Items   []*simpleRoutingExecutionItem `json:"items"`
+}
+
+type simpleRoutingExecutionItem struct {
+	TrafficType  string `json:"trafficType"`
+	GroupId      int    `json:"groupId,omitempty"`
+	GroupName    string `json:"groupName,omitempty"`
+	GroupType    string `json:"groupType,omitempty"`
+	CustomDomain string `json:"customDomain,omitempty"`
+	RuleIDs      []int  `json:"ruleIds,omitempty"`
+}
+
+type simpleRoutingRuleRank struct {
+	Priority int
+	ItemPos  int
+	RulePos  int
+}
+
+func sortedRoutingRulesForPolicy(policy *n5model.TrafficPolicy, rules []*n5model.TrafficPolicyRule) []*n5model.TrafficPolicyRule {
+	if policy == nil || len(rules) <= 1 {
+		return rules
+	}
+	remark, ok := parseSimpleRoutingExecutionRemark(policy.Remark)
+	if !ok {
+		return rules
+	}
+	rankByRuleID := make(map[int]simpleRoutingRuleRank)
+	for itemPos, item := range remark.Items {
+		if item == nil {
+			continue
+		}
+		for rulePos, ruleID := range item.RuleIDs {
+			rankByRuleID[ruleID] = simpleRoutingRuleRank{
+				Priority: simpleRoutingItemPriority(item, ruleID, rules),
+				ItemPos:  itemPos,
+				RulePos:  rulePos,
+			}
+		}
+	}
+	if len(rankByRuleID) == 0 {
+		return rules
+	}
+	sorted := append([]*n5model.TrafficPolicyRule(nil), rules...)
+	originalPos := make(map[int]int, len(sorted))
+	for idx, rule := range sorted {
+		if rule != nil {
+			originalPos[rule.Id] = idx
+		}
+	}
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left := sorted[i]
+		right := sorted[j]
+		if left == nil || right == nil {
+			return false
+		}
+		leftRank, leftOK := rankByRuleID[left.Id]
+		rightRank, rightOK := rankByRuleID[right.Id]
+		if leftOK != rightOK {
+			return leftOK
+		}
+		if leftOK && rightOK {
+			if leftRank.Priority != rightRank.Priority {
+				return leftRank.Priority < rightRank.Priority
+			}
+			if leftRank.ItemPos != rightRank.ItemPos {
+				return leftRank.ItemPos < rightRank.ItemPos
+			}
+			if leftRank.RulePos != rightRank.RulePos {
+				return leftRank.RulePos < rightRank.RulePos
+			}
+		}
+		return originalPos[left.Id] < originalPos[right.Id]
+	})
+	return sorted
+}
+
+func parseSimpleRoutingExecutionRemark(remark string) (*simpleRoutingExecutionRemark, bool) {
+	remark = strings.TrimSpace(remark)
+	if !strings.HasPrefix(remark, simpleExecRemarkPrefixForRouting) {
+		return nil, false
+	}
+	payload := strings.TrimPrefix(remark, simpleExecRemarkPrefixForRouting)
+	if len(payload) == 0 {
+		return nil, false
+	}
+	data, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, false
+	}
+	parsed := &simpleRoutingExecutionRemark{}
+	if err := json.Unmarshal(data, parsed); err != nil {
+		return nil, false
+	}
+	if parsed.Version != 1 || parsed.Items == nil {
+		return nil, false
+	}
+	return parsed, true
+}
+
+func simpleRoutingItemPriority(item *simpleRoutingExecutionItem, ruleID int, rules []*n5model.TrafficPolicyRule) int {
+	if item == nil {
+		return 100
+	}
+	if strings.EqualFold(strings.TrimSpace(item.TrafficType), simpleRoutingTrafficCustomDomain) {
+		for _, rule := range rules {
+			if rule == nil || rule.Id != ruleID {
+				continue
+			}
+			switch normalizeMatchMode(rule.MatchMode) {
+			case domainModeExact:
+				return 10
+			case domainModeSuffix:
+				return 20
+			case domainModeKeyword:
+				return 30
+			case domainModeRegexp:
+				return 40
+			default:
+				return 49
+			}
+		}
+		return 49
+	}
+	if strings.EqualFold(strings.TrimSpace(item.TrafficType), simpleRoutingTrafficGroup) {
+		switch normalizeMatchMode(item.GroupType) {
+		case simpleRoutingGroupCustom, "":
+			return 50
+		case simpleRoutingGroupAI:
+			return 60
+		case simpleRoutingGroupGame:
+			return 70
+		case simpleRoutingGroupStreaming:
+			return 80
+		default:
+			return 50
+		}
+	}
+	switch normalizeMatchMode(item.TrafficType) {
+	case simpleRoutingGroupAI:
+		return 60
+	case simpleRoutingGroupGame:
+		return 70
+	case simpleRoutingGroupStreaming:
+		return 80
+	default:
+		return 100
+	}
 }

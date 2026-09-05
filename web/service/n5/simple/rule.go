@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -125,6 +126,24 @@ type CreateSimpleRuleRequest struct {
 	GroupId      int    `json:"groupId" form:"groupId"`
 	EgressId     int    `json:"egressId" form:"egressId"`
 	CustomDomain string `json:"customDomain" form:"customDomain"`
+}
+
+type SimpleRuleConflictPreview struct {
+	HasConflict bool                  `json:"hasConflict"`
+	Warning     string                `json:"warning"`
+	Conflicts   []*SimpleRuleConflict `json:"conflicts"`
+}
+
+type SimpleRuleConflict struct {
+	CurrentLabel       string `json:"currentLabel"`
+	CurrentMatchLabel  string `json:"currentMatchLabel"`
+	CurrentValue       string `json:"currentValue"`
+	ExistingLabel      string `json:"existingLabel"`
+	ExistingMatchLabel string `json:"existingMatchLabel"`
+	ExistingValue      string `json:"existingValue"`
+	Relation           string `json:"relation"`
+	PriorityDirection  string `json:"priorityDirection"`
+	Message            string `json:"message"`
 }
 
 type simpleExecutionRemark struct {
@@ -500,6 +519,80 @@ func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 	return row, nil
 }
 
+func (s *RuleService) CheckSimpleRuleConflicts(req *CreateSimpleRuleRequest, editingRuleID string) (*SimpleRuleConflictPreview, error) {
+	preview := &SimpleRuleConflictPreview{
+		Conflicts: []*SimpleRuleConflict{},
+	}
+	if req == nil {
+		return nil, common.NewError("simple rule request is nil")
+	}
+	if req.GroupId > 0 {
+		req.TrafficType = simpleTrafficGroup
+	}
+	trafficType := normalizeSimpleTrafficType(req.TrafficType)
+	if !isSupportedSimpleTrafficType(trafficType) {
+		return nil, common.NewError("unsupported traffic type")
+	}
+	if trafficType == simpleTrafficAll {
+		return preview, nil
+	}
+	if _, err := s.getInboundService().GetInbound(req.InboundId); err != nil {
+		return nil, err
+	}
+	ctx, err := s.loadSimplePolicyContextByInbound(req.InboundId)
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil || ctx.ExecRemark == nil {
+		return preview, nil
+	}
+
+	excludeKey := ""
+	if strings.TrimSpace(editingRuleID) != "" {
+		editCtx, item, legacy, err := s.loadSimpleRuleSelection(editingRuleID)
+		if err != nil {
+			return nil, err
+		}
+		if legacy {
+			return preview, nil
+		}
+		if editCtx == nil || editCtx.Inbound == nil || editCtx.Inbound.Id != req.InboundId {
+			return nil, common.NewError("editing rule inbound is not supported")
+		}
+		excludeKey = simpleExecutionItemKey(item)
+	}
+
+	candidates, err := s.conflictCandidatesForRequest(req, trafficType)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return preview, nil
+	}
+	existing := s.conflictCandidatesForContext(ctx, excludeKey)
+	for _, current := range candidates {
+		for _, item := range existing {
+			overlap, relation := simpleRuleOverlap(current, item)
+			if !overlap {
+				continue
+			}
+			conflict := buildSimpleRuleConflict(current, item, relation)
+			preview.Conflicts = append(preview.Conflicts, conflict)
+			if len(preview.Conflicts) >= 5 {
+				break
+			}
+		}
+		if len(preview.Conflicts) >= 5 {
+			break
+		}
+	}
+	preview.HasConflict = len(preview.Conflicts) > 0
+	if preview.HasConflict {
+		preview.Warning = buildSimpleRuleConflictWarning(preview.Conflicts)
+	}
+	return preview, nil
+}
+
 func (s *RuleService) UpdateSimpleRule(ruleID string, req *CreateSimpleRuleRequest) (*SimpleRule, error) {
 	if strings.TrimSpace(ruleID) == "" {
 		return nil, common.NewError("rule id is required")
@@ -534,6 +627,9 @@ func (s *RuleService) UpdateSimpleRule(ruleID string, req *CreateSimpleRuleReque
 	requestItem, err := s.buildExecutionItemFromRequest(req, normalizeSimpleTrafficType(req.TrafficType), currentGroup)
 	if err != nil {
 		return nil, err
+	}
+	if item.TrafficType == simpleTrafficCustomDomain {
+		return s.updateCustomDomainSimpleRule(ctx, item, requestItem, egress)
 	}
 	if simpleExecutionItemKey(item) != simpleExecutionItemKey(requestItem) {
 		return nil, common.NewError("editing rule identity is not supported")
@@ -571,6 +667,54 @@ func (s *RuleService) UpdateSimpleRule(ruleID string, req *CreateSimpleRuleReque
 		}); err != nil {
 			return nil, err
 		}
+	}
+	ctx.Rules, _ = s.getPolicyService().ListRules(ctx.Policy.Id)
+	ctx.RuleMap = buildRuleMap(ctx.Rules)
+	row, _ := buildSimpleRuleFromExecutionItem(ctx.Policy, ctx.Binding, ctx.Inbound, ctx.Policy.Enabled && ctx.Binding.Enabled, item, ctx.RuleMap, map[int]*n5model.Egress{
+		egress.Id: egress,
+	})
+	return row, nil
+}
+
+func (s *RuleService) updateCustomDomainSimpleRule(ctx *simplePolicyContext, item *simpleExecutionItem, requestItem *simpleExecutionItem, egress *n5model.Egress) (*SimpleRule, error) {
+	if ctx == nil || item == nil || requestItem == nil || egress == nil {
+		return nil, common.NewError("invalid simple custom rule")
+	}
+	if item.TrafficType != simpleTrafficCustomDomain || requestItem.TrafficType != simpleTrafficCustomDomain {
+		return nil, common.NewError("editing rule identity is not supported")
+	}
+	newKey := simpleExecutionItemKey(requestItem)
+	oldKey := simpleExecutionItemKey(item)
+	if newKey != oldKey && findExecutionItemByKey(ctx.ExecRemark, newKey) != nil {
+		return nil, common.NewError("该入站已存在该分流规则，请编辑已有规则")
+	}
+	itemRules, err := getExecutionItemRules(item, ctx.RuleMap)
+	if err != nil {
+		return nil, err
+	}
+	if len(itemRules) != 1 {
+		return nil, common.NewError("simple execution metadata is corrupted")
+	}
+	matchMode, matchValue, displayValue, err := parseCustomDomainRule(requestItem.CustomDomain)
+	if err != nil {
+		return nil, err
+	}
+	rule := itemRules[0]
+	if _, err := s.getPolicyService().UpdateRule(&n5model.TrafficPolicyRule{
+		Id:         rule.Id,
+		RuleType:   "domain",
+		MatchMode:  matchMode,
+		MatchValue: matchValue,
+		TargetType: "egress",
+		TargetId:   egress.Id,
+		SortOrder:  rule.SortOrder,
+		Enabled:    rule.Enabled,
+	}); err != nil {
+		return nil, err
+	}
+	item.CustomDomain = displayValue
+	if err := s.saveExecutionRemark(ctx.Policy, ctx.ExecRemark); err != nil {
+		return nil, err
 	}
 	ctx.Rules, _ = s.getPolicyService().ListRules(ctx.Policy.Id)
 	ctx.RuleMap = buildRuleMap(ctx.Rules)
@@ -1031,9 +1175,24 @@ func (s *RuleService) buildTrafficTypes() []*SimpleTrafficOption {
 			Description: "该入口的全部流量走指定出口。",
 		},
 		{
+			Value:       simpleTrafficAI,
+			Label:       simpleTrafficLabel(simpleTrafficAI),
+			Description: "使用内置 AI 分流规则生成执行策略。",
+		},
+		{
+			Value:       simpleTrafficGame,
+			Label:       simpleTrafficLabel(simpleTrafficGame),
+			Description: "使用内置游戏分流规则生成执行策略。",
+		},
+		{
+			Value:       simpleTrafficStreaming,
+			Label:       simpleTrafficLabel(simpleTrafficStreaming),
+			Description: "使用内置流媒体分流规则生成执行策略。",
+		},
+		{
 			Value:       simpleTrafficGroup,
 			Label:       simpleTrafficLabel(simpleTrafficGroup),
-			Description: "从分流规则组复制规则并生成执行策略。",
+			Description: "从自定义规则组复制规则并生成执行策略。",
 		},
 		{
 			Value:       simpleTrafficCustomDomain,
@@ -1044,8 +1203,11 @@ func (s *RuleService) buildTrafficTypes() []*SimpleTrafficOption {
 	sort.Slice(items, func(i, j int) bool {
 		order := map[string]int{
 			simpleTrafficAll:          1,
-			simpleTrafficGroup:        2,
-			simpleTrafficCustomDomain: 3,
+			simpleTrafficAI:           2,
+			simpleTrafficGame:         3,
+			simpleTrafficStreaming:    4,
+			simpleTrafficCustomDomain: 5,
+			simpleTrafficGroup:        6,
 		}
 		return order[items[i].Value] < order[items[j].Value]
 	})
@@ -1334,6 +1496,281 @@ func canonicalCustomDomainKey(value string) string {
 		return strings.TrimSpace(strings.ToLower(value))
 	}
 	return strings.TrimSpace(strings.ToLower(displayValue))
+}
+
+type simpleRuleConflictCandidate struct {
+	ItemKey    string
+	ItemLabel  string
+	RuleType   string
+	MatchMode  string
+	MatchValue string
+	Priority   int
+}
+
+func (s *RuleService) conflictCandidatesForRequest(req *CreateSimpleRuleRequest, trafficType string) ([]*simpleRuleConflictCandidate, error) {
+	switch trafficType {
+	case simpleTrafficCustomDomain:
+		matchMode, matchValue, _, err := parseCustomDomainRule(req.CustomDomain)
+		if err != nil {
+			return nil, err
+		}
+		item := &simpleExecutionItem{TrafficType: simpleTrafficCustomDomain, CustomDomain: req.CustomDomain}
+		return []*simpleRuleConflictCandidate{{
+			ItemKey:    simpleExecutionItemKey(item),
+			ItemLabel:  simpleTrafficLabel(simpleTrafficCustomDomain),
+			RuleType:   "domain",
+			MatchMode:  matchMode,
+			MatchValue: matchValue,
+			Priority:   simpleBusinessPriority(item, &n5model.TrafficPolicyRule{MatchMode: matchMode}),
+		}}, nil
+	case simpleTrafficGroup, simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming:
+		var group *TrafficRuleGroup
+		var err error
+		if trafficType == simpleTrafficGroup {
+			group, err = s.getGroupService().GetGroup(req.GroupId)
+		} else {
+			group, err = s.findBuiltinGroupByType(trafficType)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if group == nil || group.Id <= 0 {
+			return nil, common.NewError("traffic rule group not found")
+		}
+		item := &simpleExecutionItem{
+			TrafficType: simpleTrafficGroup,
+			GroupId:     group.Id,
+			GroupName:   group.Name,
+			GroupType:   group.GroupType,
+		}
+		label := simpleConflictItemLabel(item)
+		candidates := make([]*simpleRuleConflictCandidate, 0, len(group.Rules))
+		for _, rule := range group.Rules {
+			if rule == nil || !rule.Enabled || rule.RuleType != "domain" {
+				continue
+			}
+			candidates = append(candidates, &simpleRuleConflictCandidate{
+				ItemKey:    simpleExecutionItemKey(item),
+				ItemLabel:  label,
+				RuleType:   rule.RuleType,
+				MatchMode:  rule.MatchMode,
+				MatchValue: rule.MatchValue,
+				Priority:   simpleBusinessPriority(item, &n5model.TrafficPolicyRule{MatchMode: rule.MatchMode}),
+			})
+		}
+		return candidates, nil
+	default:
+		return []*simpleRuleConflictCandidate{}, nil
+	}
+}
+
+func (s *RuleService) conflictCandidatesForContext(ctx *simplePolicyContext, excludeKey string) []*simpleRuleConflictCandidate {
+	if ctx == nil || ctx.ExecRemark == nil {
+		return []*simpleRuleConflictCandidate{}
+	}
+	candidates := make([]*simpleRuleConflictCandidate, 0)
+	for _, item := range ctx.ExecRemark.Items {
+		if item == nil {
+			continue
+		}
+		itemKey := simpleExecutionItemKey(item)
+		if excludeKey != "" && itemKey == excludeKey {
+			continue
+		}
+		rules, err := getExecutionItemRules(item, ctx.RuleMap)
+		if err != nil {
+			continue
+		}
+		label := simpleConflictItemLabel(item)
+		for _, rule := range rules {
+			if rule == nil || !rule.Enabled || rule.RuleType != "domain" {
+				continue
+			}
+			candidates = append(candidates, &simpleRuleConflictCandidate{
+				ItemKey:    itemKey,
+				ItemLabel:  label,
+				RuleType:   rule.RuleType,
+				MatchMode:  rule.MatchMode,
+				MatchValue: rule.MatchValue,
+				Priority:   simpleBusinessPriority(item, rule),
+			})
+		}
+	}
+	return candidates
+}
+
+func simpleBusinessPriority(item *simpleExecutionItem, rule *n5model.TrafficPolicyRule) int {
+	if item == nil {
+		return 100
+	}
+	trafficType := normalizeSimpleTrafficType(item.TrafficType)
+	if trafficType == simpleTrafficCustomDomain {
+		if rule == nil {
+			return 49
+		}
+		switch strings.TrimSpace(strings.ToLower(rule.MatchMode)) {
+		case "exact":
+			return 10
+		case "suffix":
+			return 20
+		case "keyword":
+			return 30
+		case "regexp":
+			return 40
+		default:
+			return 49
+		}
+	}
+	if trafficType == simpleTrafficGroup {
+		switch normalizeSimpleGroupType(item.GroupType) {
+		case simpleTrafficCustom, "":
+			return 50
+		case simpleTrafficAI:
+			return 60
+		case simpleTrafficGame:
+			return 70
+		case simpleTrafficStreaming:
+			return 80
+		default:
+			return 50
+		}
+	}
+	switch trafficType {
+	case simpleTrafficAI:
+		return 60
+	case simpleTrafficGame:
+		return 70
+	case simpleTrafficStreaming:
+		return 80
+	default:
+		return 100
+	}
+}
+
+func simpleConflictItemLabel(item *simpleExecutionItem) string {
+	if item == nil {
+		return "已有规则"
+	}
+	if normalizeSimpleTrafficType(item.TrafficType) == simpleTrafficCustomDomain {
+		return simpleTrafficLabel(simpleTrafficCustomDomain)
+	}
+	if strings.TrimSpace(item.GroupName) != "" {
+		return strings.TrimSpace(item.GroupName)
+	}
+	if groupType := normalizeSimpleGroupType(item.GroupType); groupType != "" {
+		return defaultSimpleGroupName(groupType)
+	}
+	return simpleTrafficLabel(item.TrafficType)
+}
+
+func simpleRuleOverlap(a, b *simpleRuleConflictCandidate) (bool, string) {
+	if a == nil || b == nil || a.RuleType != "domain" || b.RuleType != "domain" {
+		return false, ""
+	}
+	modeA := strings.TrimSpace(strings.ToLower(a.MatchMode))
+	modeB := strings.TrimSpace(strings.ToLower(b.MatchMode))
+	valueA := strings.TrimSpace(strings.ToLower(a.MatchValue))
+	valueB := strings.TrimSpace(strings.ToLower(b.MatchValue))
+	if valueA == "" || valueB == "" {
+		return false, ""
+	}
+	if modeA == "regexp" || modeB == "regexp" {
+		return true, "regexp"
+	}
+	if modeA == "keyword" || modeB == "keyword" {
+		if modeA == "keyword" && modeB == "keyword" {
+			return strings.Contains(valueA, valueB) || strings.Contains(valueB, valueA), "keyword"
+		}
+		keyword := valueA
+		other := valueB
+		if modeB == "keyword" {
+			keyword = valueB
+			other = valueA
+		}
+		if strings.Contains(other, keyword) || strings.Contains(keyword, other) {
+			return true, "keyword"
+		}
+		return false, ""
+	}
+	if modeA == "exact" && modeB == "exact" {
+		return valueA == valueB, "exact"
+	}
+	if modeA == "suffix" && modeB == "suffix" {
+		return suffixDomainsOverlap(valueA, valueB), "suffix"
+	}
+	if modeA == "exact" && modeB == "suffix" {
+		return exactMatchesSuffix(valueA, valueB), "exact-suffix"
+	}
+	if modeA == "suffix" && modeB == "exact" {
+		return exactMatchesSuffix(valueB, valueA), "exact-suffix"
+	}
+	return false, ""
+}
+
+func suffixDomainsOverlap(a, b string) bool {
+	return exactMatchesSuffix(a, b) || exactMatchesSuffix(b, a)
+}
+
+func exactMatchesSuffix(exact, suffix string) bool {
+	return exact == suffix || strings.HasSuffix(exact, "."+suffix)
+}
+
+func buildSimpleRuleConflict(current, existing *simpleRuleConflictCandidate, relation string) *SimpleRuleConflict {
+	conflict := &SimpleRuleConflict{
+		CurrentLabel:       current.ItemLabel,
+		CurrentMatchLabel:  simpleMatchModeLabel(current.MatchMode),
+		CurrentValue:       current.MatchValue,
+		ExistingLabel:      existing.ItemLabel,
+		ExistingMatchLabel: simpleMatchModeLabel(existing.MatchMode),
+		ExistingValue:      existing.MatchValue,
+		Relation:           relation,
+	}
+	switch {
+	case current.Priority < existing.Priority:
+		conflict.PriorityDirection = "current"
+		conflict.Message = "当前规则优先级更高，保存后重叠流量将优先走当前选择的出口。"
+	case current.Priority > existing.Priority:
+		conflict.PriorityDirection = "existing"
+		conflict.Message = "已有规则优先级更高，保存后重叠流量会先命中已有规则。"
+	default:
+		conflict.PriorityDirection = "same"
+		conflict.Message = "两条规则属于同一优先级，系统会按稳定规则顺序匹配。"
+	}
+	if relation == "keyword" {
+		conflict.Message = "关键词规则可能与现有规则重叠。" + conflict.Message
+	}
+	if relation == "regexp" {
+		conflict.Message = "正则表达式规则的覆盖范围无法完全静态判断，请确认优先级。" + conflict.Message
+	}
+	return conflict
+}
+
+func buildSimpleRuleConflictWarning(conflicts []*SimpleRuleConflict) string {
+	if len(conflicts) == 0 || conflicts[0] == nil {
+		return ""
+	}
+	first := conflicts[0]
+	prefix := "发现规则重叠"
+	if len(conflicts) > 1 {
+		prefix = "发现 " + strconv.Itoa(len(conflicts)) + " 处规则重叠"
+	}
+	return prefix + "：" + first.CurrentValue + " 与「" + first.ExistingLabel + "」中的" +
+		first.ExistingMatchLabel + " " + first.ExistingValue + " 重叠。" + first.Message
+}
+
+func simpleMatchModeLabel(mode string) string {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case "exact":
+		return "精确域名"
+	case "suffix":
+		return "域名及子域名"
+	case "keyword":
+		return "域名关键词"
+	case "regexp":
+		return "正则表达式"
+	default:
+		return "域名规则"
+	}
 }
 
 func buildSimpleExecutionRemark(remark *simpleExecutionRemark) (string, simpleExecutionRemarkStats, error) {
@@ -1645,13 +2082,13 @@ func simpleTrafficLabel(trafficType string) string {
 	case simpleTrafficAll:
 		return "全部流量"
 	case simpleTrafficAI:
-		return "AI 分流"
+		return "AI分流"
 	case simpleTrafficGame:
 		return "游戏分流"
 	case simpleTrafficStreaming:
 		return "流媒体分流"
 	case simpleTrafficGroup:
-		return "分流规则"
+		return "自定义规则组"
 	case simpleTrafficCustomDomain:
 		return "自定义域名"
 	default:
@@ -1680,23 +2117,64 @@ func parseCustomDomainRule(raw string) (string, string, string, error) {
 	switch {
 	case strings.HasPrefix(value, "full:"):
 		match := strings.TrimSpace(strings.TrimPrefix(value, "full:"))
-		if match == "" {
-			return "", "", "", common.NewError("custom domain is required")
+		if err := validateSimpleDomainInput(match); err != nil {
+			return "", "", "", err
 		}
 		return "exact", match, "full:" + match, nil
 	case strings.HasPrefix(value, "domain:"):
 		match := strings.TrimSpace(strings.TrimPrefix(value, "domain:"))
-		if match == "" {
-			return "", "", "", common.NewError("custom domain is required")
+		if err := validateSimpleDomainInput(match); err != nil {
+			return "", "", "", err
 		}
 		return "suffix", match, "domain:" + match, nil
 	case strings.HasPrefix(value, "keyword:"):
 		match := strings.TrimSpace(strings.TrimPrefix(value, "keyword:"))
+		if err := validateSimpleKeywordInput(match); err != nil {
+			return "", "", "", err
+		}
+		return "keyword", match, "keyword:" + match, nil
+	case strings.HasPrefix(value, "regexp:"):
+		match := strings.TrimSpace(strings.TrimPrefix(value, "regexp:"))
 		if match == "" {
 			return "", "", "", common.NewError("custom domain is required")
 		}
-		return "keyword", match, "keyword:" + match, nil
+		if _, err := regexp.Compile(match); err != nil {
+			return "", "", "", common.NewErrorf("invalid regexp: %v", err)
+		}
+		return "regexp", match, "regexp:" + match, nil
 	default:
+		if err := validateSimpleDomainInput(value); err != nil {
+			return "", "", "", err
+		}
 		return "suffix", value, "domain:" + value, nil
 	}
+}
+
+func validateSimpleDomainInput(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return common.NewError("custom domain is required")
+	}
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.Contains(value, "/") {
+		return common.NewError("请输入域名，不要包含 http://、https:// 或路径")
+	}
+	if strings.ContainsAny(value, " \t\r\n") {
+		return common.NewError("域名不能包含空格")
+	}
+	if strings.Contains(value, ":") {
+		return common.NewError("域名不能包含端口")
+	}
+	return nil
+}
+
+func validateSimpleKeywordInput(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return common.NewError("custom domain is required")
+	}
+	if strings.ContainsAny(value, " \t\r\n") {
+		return common.NewError("域名关键词不能包含空格")
+	}
+	return nil
 }

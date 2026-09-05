@@ -10,29 +10,31 @@
                 type="info"
                 show-icon
                 style="margin-bottom: 16px;"
-                message="分流规则采用快照模式：修改规则组不会自动影响已创建的出口规则；如需应用最新规则，请重新创建对应出口规则。">
+                message="分流规则用于管理可复用规则组；出口规则会在创建时复制快照，后续修改规则组不会自动影响已创建的出口规则。">
             </a-alert>
-            <a-card title="创建分流规则组">
+
+            <a-card title="创建规则组">
                 <a-form layout="vertical">
                     <a-row :gutter="12">
+                        <a-col :xs="24" :sm="10">
+                            <a-form-item label="规则组名称">
+                                <a-input v-model.trim="form.name" placeholder="例如：OpenAI 相关"></a-input>
+                            </a-form-item>
+                        </a-col>
                         <a-col :xs="24" :sm="8">
-                            <a-form-item label="规则组类型">
+                            <a-form-item label="类型">
                                 <a-select v-model="form.groupType" style="width: 100%">
-                                    <a-select-option value="ai">AI分流</a-select-option>
-                                    <a-select-option value="game">游戏分流</a-select-option>
-                                    <a-select-option value="streaming">流媒体分流</a-select-option>
                                     <a-select-option value="custom">自定义分流</a-select-option>
                                 </a-select>
                             </a-form-item>
                         </a-col>
-                        <a-col :xs="24" :sm="12">
-                            <a-form-item label="名称">
-                                <a-input v-model.trim="form.name" placeholder="留空使用默认名称"></a-input>
+                        <a-col :xs="24" :sm="6">
+                            <a-form-item label="状态">
+                                <a-tag color="green">启用</a-tag>
                             </a-form-item>
                         </a-col>
                     </a-row>
-                    <a-button type="primary" @click="createGroup">创建规则组</a-button>
-                    <a-button style="margin-left: 8px" @click="resetForm">重置</a-button>
+                    <a-button type="primary" @click="createGroup">创建</a-button>
                     <a-button style="margin-left: 8px" @click="openSimpleRules">出口规则</a-button>
                 </a-form>
             </a-card>
@@ -48,7 +50,7 @@
                     </a-table-column>
                     <a-table-column title="状态">
                         <template slot-scope="text, row">
-                            <a-tag :color="row.enabled ? 'green' : 'default'">[[ row.status ]]</a-tag>
+                            <a-tag :color="row.enabled ? 'green' : 'default'">[[ row.enabled ? '启用' : '停用' ]]</a-tag>
                         </template>
                     </a-table-column>
                     <a-table-column title="规则数量" data-index="ruleCount"></a-table-column>
@@ -59,37 +61,11 @@
                     </a-table-column>
                     <a-table-column title="操作">
                         <template slot-scope="text, row">
-                            <a-button size="small" @click="showGroup(row)">查看详情</a-button>
-                            <a-button size="small" style="margin-left: 8px" @click="editGroup(row)">编辑</a-button>
+                            <a-button size="small" type="primary" @click="manageGroup(row)">管理规则</a-button>
                             <a-button size="small" style="margin-left: 8px" @click="toggleGroup(row)">
                                 [[ row.enabled ? '停用' : '启用' ]]
                             </a-button>
                             <a-button v-if="!row.builtin" size="small" type="danger" style="margin-left: 8px" @click="deleteGroup(row)">删除</a-button>
-                        </template>
-                    </a-table-column>
-                </a-table>
-            </a-card>
-
-            <a-card v-if="currentGroup" :title="`规则详情: ${currentGroup.name}`" style="margin-top: 16px;">
-                <a-row :gutter="12">
-                    <a-col :xs="24" :sm="10">
-                        <a-input v-model.trim="ruleForm.domain" placeholder="full:api64.ipify.org / domain:openai.com / keyword:netflix"></a-input>
-                    </a-col>
-                    <a-col :xs="24" :sm="14">
-                        <a-button type="primary" @click="addRule">添加域名</a-button>
-                        <a-button style="margin-left: 8px" @click="saveGroupName">保存名称</a-button>
-                    </a-col>
-                </a-row>
-                <a-table style="margin-top: 16px;" :data-source="currentGroup.rules || []" :pagination="false" :row-key="row => row.id">
-                    <a-table-column title="规则" data-index="displayValue"></a-table-column>
-                    <a-table-column title="状态">
-                        <template slot-scope="text, row">
-                            <a-tag :color="row.enabled ? 'green' : 'default'">[[ row.enabled ? 'enabled' : 'disabled' ]]</a-tag>
-                        </template>
-                    </a-table-column>
-                    <a-table-column title="操作">
-                        <template slot-scope="text, row">
-                            <a-button size="small" type="danger" @click="deleteRule(row)">删除</a-button>
                         </template>
                     </a-table-column>
                 </a-table>
@@ -101,7 +77,7 @@
 <script>
     const defaultGroupForm = () => ({
         name: '',
-        groupType: 'ai',
+        groupType: 'custom',
     });
 
     const app = new Vue({
@@ -110,11 +86,7 @@
         data: {
             siderDrawer,
             groups: [],
-            currentGroup: null,
             form: defaultGroupForm(),
-            ruleForm: {
-                domain: '',
-            },
         },
         methods: {
             async loadGroups() {
@@ -123,17 +95,6 @@
                     return;
                 }
                 this.groups = msg.obj || [];
-                if (this.currentGroup) {
-                    const matched = this.groups.find(item => item.id === this.currentGroup.id);
-                    if (matched) {
-                        await this.showGroup(matched);
-                    } else {
-                        this.currentGroup = null;
-                    }
-                }
-            },
-            resetForm() {
-                this.form = defaultGroupForm();
             },
             async createGroup() {
                 const msg = await HttpUtil.post('/n5/api/simple/traffic-rule-group/add', this.form);
@@ -141,31 +102,7 @@
                     return;
                 }
                 this.$message.success('规则组已创建');
-                this.resetForm();
-                await this.loadGroups();
-                await this.showGroup(msg.obj);
-            },
-            async showGroup(row) {
-                const msg = await HttpUtil.get(`/n5/api/simple/traffic-rule-group/${row.id}`);
-                if (!msg.success) {
-                    return;
-                }
-                this.currentGroup = msg.obj;
-            },
-            editGroup(row) {
-                this.currentGroup = Object.assign({}, row, { rules: this.currentGroup && this.currentGroup.id === row.id ? this.currentGroup.rules : [] });
-            },
-            async saveGroupName() {
-                if (!this.currentGroup) {
-                    return;
-                }
-                const msg = await HttpUtil.post(`/n5/api/simple/traffic-rule-group/update/${this.currentGroup.id}`, { name: this.currentGroup.name });
-                if (!msg.success) {
-                    return;
-                }
-                this.$message.success('规则组已更新');
-                await this.loadGroups();
-                await this.showGroup(msg.obj);
+                location.href = `${basePath}n5/simple/traffic-rules/${msg.obj.id}`;
             },
             async toggleGroup(row) {
                 const action = row.enabled ? 'disable' : 'enable';
@@ -175,7 +112,6 @@
                 }
                 this.$message.success('规则组状态已更新');
                 await this.loadGroups();
-                await this.showGroup(msg.obj);
             },
             async deleteGroup(row) {
                 if (row.deleteHint) {
@@ -186,40 +122,10 @@
                     return;
                 }
                 this.$message.success('规则组已删除');
-                if (this.currentGroup && this.currentGroup.id === row.id) {
-                    this.currentGroup = null;
-                }
                 await this.loadGroups();
             },
-            async addRule() {
-                if (!this.currentGroup) {
-                    return;
-                }
-                const msg = await HttpUtil.post('/n5/api/simple/traffic-rule/add', {
-                    groupId: this.currentGroup.id,
-                    domain: this.ruleForm.domain,
-                });
-                if (!msg.success) {
-                    return;
-                }
-                this.$message.success('规则已添加');
-                this.ruleForm.domain = '';
-                await this.showGroup(this.currentGroup);
-                await this.loadGroups();
-            },
-            async deleteRule(row) {
-                if (!this.currentGroup) {
-                    return;
-                }
-                const msg = await HttpUtil.post(`/n5/api/simple/traffic-rule/delete/${row.id}`, {
-                    groupId: this.currentGroup.id,
-                });
-                if (!msg.success) {
-                    return;
-                }
-                this.$message.success('规则已删除');
-                await this.showGroup(this.currentGroup);
-                await this.loadGroups();
+            manageGroup(row) {
+                location.href = `${basePath}n5/simple/traffic-rules/${row.id}`;
             },
             openSimpleRules() {
                 location.href = `${basePath}n5/simple/rules`;

@@ -20,6 +20,7 @@ type fakeRuleService struct {
 	created    *simpleservice.SimpleRule
 	updated    *simpleservice.SimpleRule
 	deletedID  string
+	preview    *simpleservice.SimpleRuleConflictPreview
 }
 
 func (f *fakeRuleService) ListSimpleRules() (*simpleservice.SimpleRuleListResult, error) {
@@ -58,6 +59,13 @@ func (f *fakeRuleService) UpdateSimpleRule(ruleId string, req *simpleservice.Cre
 func (f *fakeRuleService) DeleteSimpleRule(ruleId string) error {
 	f.deletedID = ruleId
 	return nil
+}
+
+func (f *fakeRuleService) CheckSimpleRuleConflicts(req *simpleservice.CreateSimpleRuleRequest, editingRuleId string) (*simpleservice.SimpleRuleConflictPreview, error) {
+	if f.preview != nil {
+		return f.preview, nil
+	}
+	return &simpleservice.SimpleRuleConflictPreview{}, nil
 }
 
 type fakeRuleRestart struct {
@@ -225,6 +233,21 @@ func TestSimpleRuleAPIResponses(t *testing.T) {
 	}
 	if restart.calls != 3 {
 		t.Fatalf("unexpected restart count after update: %d", restart.calls)
+	}
+
+	previewBody := bytes.NewBufferString(`{"inboundId":7,"trafficType":"custom-domain","customDomain":"domain:openai.com","egressId":10}`)
+	previewReq, _ := http.NewRequest(http.MethodPost, "/n5/api/simple/rule/conflicts", previewBody)
+	previewReq.Header.Set("Content-Type", "application/json")
+	previewResp := httptest.NewRecorder()
+	engine.ServeHTTP(previewResp, previewReq)
+	if previewResp.Code != http.StatusOK {
+		t.Fatalf("unexpected preview status: %d", previewResp.Code)
+	}
+	if !bytes.Contains(previewResp.Body.Bytes(), []byte(`"hasConflict"`)) {
+		t.Fatalf("unexpected preview body: %s", previewResp.Body.String())
+	}
+	if restart.calls != 3 {
+		t.Fatalf("preview should not trigger restart: %d", restart.calls)
 	}
 
 	delBody := bytes.NewBufferString(`{"ruleId":"simple-rule:21:YWk"}`)

@@ -14,6 +14,7 @@ type trafficRuleGroupAPI interface {
 	UpdateGroup(id int, req *simpleservice.UpdateTrafficRuleGroupRequest) (*simpleservice.TrafficRuleGroup, error)
 	DeleteGroup(id int) error
 	AddDomainRule(req *simpleservice.AddTrafficRuleDomainRequest) (*simpleservice.TrafficRuleGroupRule, error)
+	UpdateDomainRule(ruleId int, req *simpleservice.UpdateTrafficRuleDomainRequest) (*simpleservice.TrafficRuleGroupRule, error)
 	DeleteDomainRule(groupId int, ruleId int) error
 	EnableGroup(id int) (*simpleservice.TrafficRuleGroup, error)
 	DisableGroup(id int) (*simpleservice.TrafficRuleGroup, error)
@@ -35,6 +36,7 @@ func (a *TrafficRuleGroupController) initRouter(g *gin.RouterGroup) {
 	pageGroup := g.Group("/n5")
 	pageGroup.Use(checkLogin)
 	pageGroup.GET("/simple/traffic-rules", a.page)
+	pageGroup.GET("/simple/traffic-rules/:id", a.detailPage)
 
 	apiGroup := g.Group("/n5/api/simple")
 	apiGroup.Use(checkLogin)
@@ -46,11 +48,16 @@ func (a *TrafficRuleGroupController) initRouter(g *gin.RouterGroup) {
 	apiGroup.POST("/traffic-rule-group/enable/:id", a.enable)
 	apiGroup.POST("/traffic-rule-group/disable/:id", a.disable)
 	apiGroup.POST("/traffic-rule/add", a.addRule)
+	apiGroup.POST("/traffic-rule/update/:id", a.updateRule)
 	apiGroup.POST("/traffic-rule/delete/:id", a.delRule)
 }
 
 func (a *TrafficRuleGroupController) page(c *gin.Context) {
 	html(c, "simple_traffic_rules.html", "分流规则", nil)
+}
+
+func (a *TrafficRuleGroupController) detailPage(c *gin.Context) {
+	html(c, "simple_traffic_rule_group.html", "管理规则", nil)
 }
 
 func (a *TrafficRuleGroupController) list(c *gin.Context) {
@@ -155,6 +162,25 @@ func (a *TrafficRuleGroupController) addRule(c *gin.Context) {
 	item, err := a.service.AddDomainRule(record)
 	if err != nil {
 		jsonMsg(c, "add traffic rule", err)
+		return
+	}
+	jsonObj(c, item, nil)
+}
+
+func (a *TrafficRuleGroupController) updateRule(c *gin.Context) {
+	ruleID := parseID(c.Param("id"))
+	if ruleID <= 0 {
+		jsonMsg(c, "update traffic rule", common.NewError("invalid traffic rule id"))
+		return
+	}
+	record := &simpleservice.UpdateTrafficRuleDomainRequest{}
+	if err := c.ShouldBind(record); err != nil {
+		jsonMsg(c, "update traffic rule", err)
+		return
+	}
+	item, err := a.service.UpdateDomainRule(ruleID, record)
+	if err != nil {
+		jsonMsg(c, "update traffic rule", err)
 		return
 	}
 	jsonObj(c, item, nil)

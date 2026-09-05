@@ -94,6 +94,90 @@ func TestTrafficRuleGroupServiceAddDeleteRuleAndDisable(t *testing.T) {
 	}
 }
 
+func TestTrafficRuleGroupServiceUpdateDomainRule(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewTrafficRuleGroupService()
+	group, err := svc.CreateGroup(&CreateTrafficRuleGroupRequest{
+		GroupType: simpleTrafficCustom,
+		Name:      "custom domains",
+	})
+	if err != nil {
+		t.Fatalf("create custom group failed: %v", err)
+	}
+	rule, err := svc.AddDomainRule(&AddTrafficRuleDomainRequest{
+		GroupId: group.Id,
+		Domain:  "domain:example.com",
+	})
+	if err != nil {
+		t.Fatalf("add domain rule failed: %v", err)
+	}
+
+	updated, err := svc.UpdateDomainRule(rule.Id, &UpdateTrafficRuleDomainRequest{
+		GroupId: group.Id,
+		Domain:  "full:api.ipify.org",
+	})
+	if err != nil {
+		t.Fatalf("update domain rule failed: %v", err)
+	}
+	if updated.MatchMode != "exact" || updated.MatchValue != "api.ipify.org" || updated.DisplayValue != "full:api.ipify.org" {
+		t.Fatalf("unexpected updated rule: %#v", updated)
+	}
+
+	fetched, err := svc.GetGroup(group.Id)
+	if err != nil {
+		t.Fatalf("get group failed: %v", err)
+	}
+	if len(fetched.Rules) != 1 || fetched.Rules[0].MatchMode != "exact" || fetched.Rules[0].MatchValue != "api.ipify.org" {
+		t.Fatalf("unexpected fetched rules: %#v", fetched.Rules)
+	}
+}
+
+func TestTrafficRuleGroupServiceUpdateDomainRuleProtectsOwnershipAndValidates(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewTrafficRuleGroupService()
+	groupA, err := svc.CreateGroup(&CreateTrafficRuleGroupRequest{GroupType: simpleTrafficCustom, Name: "group A"})
+	if err != nil {
+		t.Fatalf("create group A failed: %v", err)
+	}
+	groupB, err := svc.CreateGroup(&CreateTrafficRuleGroupRequest{GroupType: simpleTrafficCustom, Name: "group B"})
+	if err != nil {
+		t.Fatalf("create group B failed: %v", err)
+	}
+	rule, err := svc.AddDomainRule(&AddTrafficRuleDomainRequest{GroupId: groupA.Id, Domain: "domain:example.com"})
+	if err != nil {
+		t.Fatalf("add domain rule failed: %v", err)
+	}
+
+	if _, err := svc.UpdateDomainRule(rule.Id, &UpdateTrafficRuleDomainRequest{
+		GroupId: groupB.Id,
+		Domain:  "domain:openai.com",
+	}); err == nil {
+		t.Fatal("expected cross-group update to fail")
+	}
+	if _, err := svc.UpdateDomainRule(rule.Id, &UpdateTrafficRuleDomainRequest{
+		GroupId: groupA.Id,
+		Domain:  "https://example.com/path",
+	}); err == nil || !strings.Contains(err.Error(), "不要包含") {
+		t.Fatalf("expected invalid domain error, got %v", err)
+	}
+	if _, err := svc.UpdateDomainRule(rule.Id, &UpdateTrafficRuleDomainRequest{
+		GroupId: groupA.Id,
+		Domain:  "regexp:[",
+	}); err == nil || !strings.Contains(err.Error(), "invalid regexp") {
+		t.Fatalf("expected invalid regexp error, got %v", err)
+	}
+
+	fetched, err := svc.GetGroup(groupA.Id)
+	if err != nil {
+		t.Fatalf("get group failed: %v", err)
+	}
+	if len(fetched.Rules) != 1 || fetched.Rules[0].MatchValue != "example.com" {
+		t.Fatalf("failed update should not mutate rule: %#v", fetched.Rules)
+	}
+}
+
 func TestTrafficRuleGroupServiceSnapshotOnlyAffectsExecPolicy(t *testing.T) {
 	initSimpleTestDB(t)
 

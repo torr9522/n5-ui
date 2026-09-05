@@ -44,6 +44,35 @@ func createTrafficTestEgress(t *testing.T, svc *EgressService, name string) *n5m
 	return egress
 }
 
+func trafficInboundRoutingMatchersAndTargets(t *testing.T, routing map[string]interface{}, inboundTag string) []string {
+	t.Helper()
+	items, _ := routing["rules"].([]interface{})
+	result := make([]string, 0)
+	for _, item := range items {
+		rule, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		inboundTags, _ := rule["inboundTag"].([]interface{})
+		if len(inboundTags) == 0 || inboundTags[0] != inboundTag {
+			continue
+		}
+		matcher := "*"
+		if domains, _ := rule["domain"].([]interface{}); len(domains) > 0 {
+			matcher, _ = domains[0].(string)
+		}
+		if ips, _ := rule["ip"].([]interface{}); len(ips) > 0 {
+			matcher, _ = ips[0].(string)
+		}
+		tag, _ := rule["outboundTag"].(string)
+		if tag == "" {
+			tag, _ = rule["balancerTag"].(string)
+		}
+		result = append(result, matcher+"=>"+tag)
+	}
+	return result
+}
+
 func TestTrafficPolicyServiceManagePolicyRuleAndBinding(t *testing.T) {
 	initTestDB(t)
 
@@ -289,6 +318,72 @@ func TestTrafficPolicyDisableExcludesRulesFromXrayFragments(t *testing.T) {
 	rules = routing["rules"].([]interface{})
 	if len(rules) != 0 {
 		t.Fatalf("expected no routing rules after policy disable, got %d", len(rules))
+	}
+}
+
+func TestAdvancedTrafficPolicyRuleOrderIsPreserved(t *testing.T) {
+	initTestDB(t)
+
+	egressSvc := &EgressService{}
+	policySvc := &TrafficPolicyService{}
+	extSvc := &XrayExtService{}
+
+	egressA := createTrafficTestEgress(t, egressSvc, "advanced-a")
+	egressB := createTrafficTestEgress(t, egressSvc, "advanced-b")
+	inbound := createTrafficTestInbound(t, 34112, "advanced-order-inbound")
+
+	policy, err := policySvc.Create(&n5model.TrafficPolicy{
+		Name:    "advanced-order-policy",
+		Remark:  "ordinary-advanced-policy",
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create policy failed: %v", err)
+	}
+	if _, err := policySvc.AddRule(&n5model.TrafficPolicyRule{
+		PolicyId:   policy.Id,
+		RuleType:   ruleTypeDomain,
+		MatchMode:  domainModeSuffix,
+		MatchValue: "wide.example.com",
+		TargetType: targetTypeEgress,
+		TargetId:   egressA.Id,
+		SortOrder:  1,
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("create wide rule failed: %v", err)
+	}
+	if _, err := policySvc.AddRule(&n5model.TrafficPolicyRule{
+		PolicyId:   policy.Id,
+		RuleType:   ruleTypeDomain,
+		MatchMode:  domainModeExact,
+		MatchValue: "api.wide.example.com",
+		TargetType: targetTypeEgress,
+		TargetId:   egressB.Id,
+		SortOrder:  2,
+		Enabled:    true,
+	}); err != nil {
+		t.Fatalf("create exact rule failed: %v", err)
+	}
+	if _, err := policySvc.BindInboundPolicy(inbound.Id, policy.Id); err != nil {
+		t.Fatalf("bind policy failed: %v", err)
+	}
+
+	routing, err := extSvc.GenerateRoutingFragments()
+	if err != nil {
+		t.Fatalf("generate routing failed: %v", err)
+	}
+	got := trafficInboundRoutingMatchersAndTargets(t, routing, inbound.Tag)
+	want := []string{
+		"domain:wide.example.com=>" + egressA.Tag,
+		"full:api.wide.example.com=>" + egressB.Tag,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected routing count: got=%v want=%v", got, want)
+	}
+	for idx := range want {
+		if got[idx] != want[idx] {
+			t.Fatalf("advanced routing order changed: got=%v want=%v", got, want)
+		}
 	}
 }
 
