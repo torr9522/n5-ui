@@ -9,6 +9,7 @@ import (
 	"time"
 	"x-ui/database"
 	"x-ui/database/model"
+	n5model "x-ui/database/model/n5"
 	"x-ui/util/common"
 	"x-ui/xray"
 )
@@ -325,7 +326,71 @@ func (s *InboundService) AddInbounds(inbounds []*model.Inbound) error {
 
 func (s *InboundService) DelInbound(id int) error {
 	db := database.GetDB()
-	return db.Delete(model.Inbound{}, id).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := cleanupN5SimpleExecutionStateForInbound(tx, id); err != nil {
+			return err
+		}
+		return tx.Delete(model.Inbound{}, id).Error
+	})
+}
+
+func cleanupN5SimpleExecutionStateForInbound(tx *gorm.DB, inboundId int) error {
+	bindings := make([]*n5model.TrafficPolicyBinding, 0)
+	if err := tx.Model(&n5model.TrafficPolicyBinding{}).
+		Where("inbound_id = ?", inboundId).
+		Find(&bindings).Error; err != nil {
+		return err
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+
+	for _, binding := range bindings {
+		policy := &n5model.TrafficPolicy{}
+		err := tx.Model(&n5model.TrafficPolicy{}).Where("id = ?", binding.PolicyId).First(policy).Error
+		if database.IsNotFound(err) {
+			if err := tx.Delete(&n5model.TrafficPolicyBinding{}, binding.Id).Error; err != nil {
+				return err
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+
+		if !isN5SimpleManagedPolicyRemark(policy.Remark) {
+			if err := tx.Delete(&n5model.TrafficPolicyBinding{}, binding.Id).Error; err != nil {
+				return err
+			}
+			continue
+		}
+
+		var otherBindingCount int64
+		if err := tx.Model(&n5model.TrafficPolicyBinding{}).
+			Where("policy_id = ? and inbound_id <> ?", policy.Id, inboundId).
+			Count(&otherBindingCount).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&n5model.TrafficPolicyBinding{}, binding.Id).Error; err != nil {
+			return err
+		}
+		if otherBindingCount > 0 {
+			continue
+		}
+		if err := tx.Where("policy_id = ?", policy.Id).Delete(&n5model.TrafficPolicyRule{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&n5model.TrafficPolicy{}, policy.Id).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func isN5SimpleManagedPolicyRemark(remark string) bool {
+	remark = strings.TrimSpace(remark)
+	return strings.HasPrefix(remark, "n5-simple-exec|") || strings.HasPrefix(remark, "n5-simple|")
 }
 
 func (s *InboundService) GetInbound(id int) (*model.Inbound, error) {
