@@ -327,6 +327,89 @@ func TestSimpleRuleServiceTransactionalNormalMutationMatrix(t *testing.T) {
 	}
 }
 
+func TestSimpleRuleServiceRejectsDisabledBuiltinCreate(t *testing.T) {
+	initSimpleTestDB(t)
+
+	ruleSvc := NewRuleService()
+	groupSvc := NewTrafficRuleGroupService()
+	egressA := createTestRuleEgress(t, "disabled-builtin-a")
+	egressB := createTestRuleEgress(t, "disabled-builtin-b")
+
+	for index, groupType := range []string{simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming} {
+		group, err := mustGetBuiltinGroup(groupSvc, groupType)
+		if err != nil {
+			t.Fatalf("get builtin %s failed: %v", groupType, err)
+		}
+		if _, err := groupSvc.DisableGroup(group.Id); err != nil {
+			t.Fatalf("disable builtin %s failed: %v", groupType, err)
+		}
+		inbound := createTestRuleInbound(t, 33301+index, "disabled-builtin-"+groupType)
+		_, err = ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{
+			InboundId:   inbound.Id,
+			TrafficType: groupType,
+			EgressId:    egressA.Id,
+		})
+		if err == nil || !strings.Contains(err.Error(), simpleTrafficLabel(groupType)+"已停用") {
+			t.Fatalf("unexpected disabled builtin create error for %s: %v", groupType, err)
+		}
+	}
+
+	aiGroup, _ := mustGetBuiltinGroup(groupSvc, simpleTrafficAI)
+	viaIDInbound := createTestRuleInbound(t, 33311, "disabled-builtin-via-id")
+	_, err := ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{
+		InboundId: viaIDInbound.Id,
+		GroupId:   aiGroup.Id,
+		EgressId:  egressA.Id,
+	})
+	if err == nil || !strings.Contains(err.Error(), "AI分流已停用") {
+		t.Fatalf("unexpected disabled builtin create via group id error: %v", err)
+	}
+
+	allInbound := createTestRuleInbound(t, 33312, "disabled-builtin-all")
+	if _, err := ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: allInbound.Id, TrafficType: simpleTrafficAll, EgressId: egressA.Id}); err != nil {
+		t.Fatalf("ALL should not be blocked by disabled builtin: %v", err)
+	}
+	customInbound := createTestRuleInbound(t, 33313, "disabled-builtin-direct")
+	if _, err := ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: customInbound.Id, TrafficType: simpleTrafficCustomDomain, CustomDomain: "full:disabled-builtin.example.com", EgressId: egressA.Id}); err != nil {
+		t.Fatalf("direct custom should not be blocked by disabled builtin: %v", err)
+	}
+	customGroup, err := groupSvc.CreateGroup(&CreateTrafficRuleGroupRequest{GroupType: simpleTrafficCustom, Name: "disabled-builtin-custom"})
+	if err != nil {
+		t.Fatalf("create custom group failed: %v", err)
+	}
+	if _, err := groupSvc.AddDomainRule(&AddTrafficRuleDomainRequest{GroupId: customGroup.Id, Domain: "disabled-custom-group.example.com"}); err != nil {
+		t.Fatalf("add custom group rule failed: %v", err)
+	}
+	customGroupInbound := createTestRuleInbound(t, 33314, "disabled-builtin-custom-group")
+	if _, err := ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: customGroupInbound.Id, GroupId: customGroup.Id, EgressId: egressA.Id}); err != nil {
+		t.Fatalf("custom group should not be blocked by disabled builtin: %v", err)
+	}
+
+	if _, err := groupSvc.EnableGroup(aiGroup.Id); err != nil {
+		t.Fatalf("enable ai group failed: %v", err)
+	}
+	enabledInbound := createTestRuleInbound(t, 33315, "enabled-builtin")
+	aiRule, err := ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: enabledInbound.Id, TrafficType: simpleTrafficAI, EgressId: egressA.Id})
+	if err != nil {
+		t.Fatalf("AI create should pass after re-enable: %v", err)
+	}
+	before := mustExecutionItemSnapshot(t, ruleSvc, enabledInbound.Id, simpleTrafficAI)
+	if _, err := groupSvc.DisableGroup(aiGroup.Id); err != nil {
+		t.Fatalf("disable ai group after snapshot failed: %v", err)
+	}
+	updated, err := ruleSvc.UpdateSimpleRule(aiRule.RuleId, &CreateSimpleRuleRequest{InboundId: enabledInbound.Id, GroupId: aiGroup.Id, EgressId: egressB.Id})
+	if err != nil {
+		t.Fatalf("existing AI snapshot target update should pass after source disabled: %v", err)
+	}
+	if updated.EgressId != egressB.Id {
+		t.Fatalf("expected updated snapshot target: %#v", updated)
+	}
+	after := mustExecutionItemSnapshot(t, ruleSvc, enabledInbound.Id, simpleTrafficAI)
+	if strings.Join(before, ",") != strings.Join(after, ",") {
+		t.Fatalf("existing snapshot changed after disabled builtin target update: before=%v after=%v", before, after)
+	}
+}
+
 func TestSimpleRuleServiceRejectsDuplicateAll(t *testing.T) {
 	initSimpleTestDB(t)
 

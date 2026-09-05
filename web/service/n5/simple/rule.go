@@ -496,6 +496,9 @@ func (s *RuleService) createSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 			return nil, common.NewError("traffic rule group not found")
 		}
 		if !group.Enabled {
+			if isBuiltinSimpleGroupType(group.GroupType) {
+				return nil, disabledBuiltinGroupError(group.GroupType)
+			}
 			return nil, common.NewError("traffic rule group is disabled")
 		}
 		item, err = s.buildExecutionItemFromRequest(req, trafficType, group)
@@ -551,6 +554,9 @@ func (s *RuleService) createSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 		}
 		if group == nil || group.Id <= 0 {
 			return nil, common.NewError("traffic rule group not found")
+		}
+		if !group.Enabled {
+			return nil, disabledBuiltinGroupError(trafficType)
 		}
 		item, err = s.buildExecutionItemFromRequest(req, trafficType, group)
 		if err != nil {
@@ -2194,6 +2200,10 @@ func simpleTrafficLabel(trafficType string) string {
 	default:
 		return trafficType
 	}
+}
+
+func disabledBuiltinGroupError(groupType string) error {
+	return common.NewError(simpleTrafficLabel(normalizeSimpleGroupType(groupType)) + "已停用，请先在分流规则中启用后再使用")
 }
 
 func normalizeSimpleTrafficType(trafficType string) string {
