@@ -7,6 +7,7 @@ import (
 	"strings"
 	"x-ui/config"
 	"x-ui/logger"
+	"x-ui/util/common"
 	"x-ui/web/entity"
 )
 
@@ -50,7 +51,7 @@ func jsonMsgObj(c *gin.Context, msg string, obj interface{}, err error) {
 		}
 	} else {
 		m.Success = false
-		m.Msg = msg + "失败: " + err.Error()
+		m.Msg = msg + "失败: " + common.SafeErrorMessage(err)
 		logger.Warning(msg+"失败: ", err)
 	}
 	c.JSON(http.StatusOK, m)

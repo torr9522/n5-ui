@@ -8,6 +8,7 @@ import (
 	"x-ui/config"
 	n5model "x-ui/database/model/n5"
 	"x-ui/logger"
+	"x-ui/util/common"
 	"x-ui/web/entity"
 	coreservice "x-ui/web/service"
 	n5service "x-ui/web/service/n5"
@@ -215,7 +216,7 @@ func jsonMsgObj(c *gin.Context, msg string, obj interface{}, err error) {
 		}
 	} else {
 		m.Success = false
-		m.Msg = msg + "失败: " + err.Error()
+		m.Msg = msg + "失败: " + common.SafeErrorMessage(err)
 		logger.Warning(msg+"失败: ", err)
 	}
 	c.JSON(http.StatusOK, m)

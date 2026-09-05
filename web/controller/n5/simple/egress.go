@@ -202,7 +202,7 @@ func jsonMsgObj(c *gin.Context, msg string, obj interface{}, err error) {
 		}
 	} else {
 		m.Success = false
-		m.Msg = msg + "失败: " + err.Error()
+		m.Msg = msg + "失败: " + common.SafeErrorMessage(err)
 	}
 	c.JSON(http.StatusOK, m)
 }
