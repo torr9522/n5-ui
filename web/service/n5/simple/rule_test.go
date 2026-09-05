@@ -2,6 +2,8 @@ package simple
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -116,6 +118,212 @@ func TestSimpleRuleServiceAllAIAndGameCanCoexist(t *testing.T) {
 	}
 	if len(ctx.Rules) != aiGroup.RuleCount+gameGroup.RuleCount {
 		t.Fatalf("unexpected merged rule count: %d", len(ctx.Rules))
+	}
+}
+
+func TestSimpleRuleServiceTransactionalCreateRollback(t *testing.T) {
+	initSimpleTestDB(t)
+
+	groupSvc := NewTrafficRuleGroupService()
+	aiGroup, _ := mustGetBuiltinGroup(groupSvc, simpleTrafficAI)
+	egress := createTestRuleEgress(t, "tx-create-egress")
+	inboundA := createTestRuleInbound(t, 33201, "tx-create-a")
+	inboundB := createTestRuleInbound(t, 33202, "tx-create-b")
+	if _, err := NewRuleService().CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inboundB.Id, TrafficType: simpleTrafficAll, EgressId: egress.Id}); err != nil {
+		t.Fatalf("create inbound b baseline failed: %v", err)
+	}
+
+	before := captureSimpleRuleDBState(t)
+	fail := errors.New("injected create failure")
+	svc := NewRuleService()
+	svc.mutationTestHook = func(stage string) error {
+		if stage == simpleMutationHookAfterEnsurePolicy {
+			return fail
+		}
+		return nil
+	}
+	if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inboundA.Id, TrafficType: simpleTrafficAll, EgressId: egress.Id}); !errors.Is(err, fail) {
+		t.Fatalf("unexpected create policy rollback error: %v", err)
+	}
+	assertSimpleRuleDBStateEqual(t, before)
+
+	svc = NewRuleService()
+	svc.mutationTestHook = func(stage string) error {
+		if stage == simpleMutationHookAfterAppendRules {
+			return fail
+		}
+		return nil
+	}
+	if _, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inboundA.Id, GroupId: aiGroup.Id, EgressId: egress.Id}); !errors.Is(err, fail) {
+		t.Fatalf("unexpected create rule rollback error: %v", err)
+	}
+	assertSimpleRuleDBStateEqual(t, before)
+
+	ctxB := mustLoadSimplePolicyContext(t, NewRuleService(), inboundB.Id)
+	if ctxB.Policy.DefaultTargetId != egress.Id || len(ctxB.ExecRemark.Items) != 0 {
+		t.Fatalf("inbound b changed after inbound a rollback: %#v %#v", ctxB.Policy, ctxB.ExecRemark)
+	}
+}
+
+func TestSimpleRuleServiceTransactionalUpdateRollback(t *testing.T) {
+	initSimpleTestDB(t)
+
+	svc := NewRuleService()
+	egressA := createTestRuleEgress(t, "tx-update-a")
+	egressB := createTestRuleEgress(t, "tx-update-b")
+	inbound := createTestRuleInbound(t, 33203, "tx-update-inbound")
+
+	allRule, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficAll, EgressId: egressA.Id})
+	if err != nil {
+		t.Fatalf("create all failed: %v", err)
+	}
+	customRule, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "full:tx.example.com",
+		EgressId:     egressA.Id,
+	})
+	if err != nil {
+		t.Fatalf("create custom failed: %v", err)
+	}
+
+	before := captureSimpleRuleDBState(t)
+	fail := errors.New("injected update failure")
+	failingSvc := NewRuleService()
+	failingSvc.mutationTestHook = func(stage string) error {
+		if stage == simpleMutationHookAfterPolicyUpdate {
+			return fail
+		}
+		return nil
+	}
+	if _, err := failingSvc.UpdateSimpleRule(allRule.RuleId, &CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficAll, EgressId: egressB.Id}); !errors.Is(err, fail) {
+		t.Fatalf("unexpected update all rollback error: %v", err)
+	}
+	assertSimpleRuleDBStateEqual(t, before)
+
+	failingSvc = NewRuleService()
+	failingSvc.mutationTestHook = func(stage string) error {
+		if stage == simpleMutationHookAfterRuleUpdate {
+			return fail
+		}
+		return nil
+	}
+	if _, err := failingSvc.UpdateSimpleRule(customRule.RuleId, &CreateSimpleRuleRequest{
+		InboundId:    inbound.Id,
+		TrafficType:  simpleTrafficCustomDomain,
+		CustomDomain: "domain:changed.example.com",
+		EgressId:     egressB.Id,
+	}); !errors.Is(err, fail) {
+		t.Fatalf("unexpected update custom rollback error: %v", err)
+	}
+	assertSimpleRuleDBStateEqual(t, before)
+}
+
+func TestSimpleRuleServiceTransactionalDeleteRollback(t *testing.T) {
+	initSimpleTestDB(t)
+
+	groupSvc := NewTrafficRuleGroupService()
+	aiGroup, _ := mustGetBuiltinGroup(groupSvc, simpleTrafficAI)
+	svc := NewRuleService()
+	egress := createTestRuleEgress(t, "tx-delete-egress")
+	inbound := createTestRuleInbound(t, 33204, "tx-delete-inbound")
+
+	allRule, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficAll, EgressId: egress.Id})
+	if err != nil {
+		t.Fatalf("create all failed: %v", err)
+	}
+	aiRule, err := svc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, GroupId: aiGroup.Id, EgressId: egress.Id})
+	if err != nil {
+		t.Fatalf("create ai failed: %v", err)
+	}
+
+	before := captureSimpleRuleDBState(t)
+	fail := errors.New("injected delete failure")
+	failingSvc := NewRuleService()
+	failingSvc.mutationTestHook = func(stage string) error {
+		if stage == simpleMutationHookAfterPolicyUpdate {
+			return fail
+		}
+		return nil
+	}
+	if err := failingSvc.DeleteSimpleRule(allRule.RuleId); !errors.Is(err, fail) {
+		t.Fatalf("unexpected delete all rollback error: %v", err)
+	}
+	assertSimpleRuleDBStateEqual(t, before)
+
+	failingSvc = NewRuleService()
+	failingSvc.mutationTestHook = func(stage string) error {
+		if stage == simpleMutationHookAfterRuleDelete {
+			return fail
+		}
+		return nil
+	}
+	if err := failingSvc.DeleteSimpleRule(aiRule.RuleId); !errors.Is(err, fail) {
+		t.Fatalf("unexpected delete ai rollback error: %v", err)
+	}
+	assertSimpleRuleDBStateEqual(t, before)
+}
+
+func TestSimpleRuleServiceTransactionalNormalMutationMatrix(t *testing.T) {
+	initSimpleTestDB(t)
+
+	ruleSvc := NewRuleService()
+	groupSvc := NewTrafficRuleGroupService()
+	aiGroup, _ := mustGetBuiltinGroup(groupSvc, simpleTrafficAI)
+	customGroup, err := groupSvc.CreateGroup(&CreateTrafficRuleGroupRequest{GroupType: simpleTrafficCustom, Name: "tx-custom-group"})
+	if err != nil {
+		t.Fatalf("create custom group failed: %v", err)
+	}
+	if _, err := groupSvc.AddDomainRule(&AddTrafficRuleDomainRequest{GroupId: customGroup.Id, Domain: "tx-group.example.com"}); err != nil {
+		t.Fatalf("add custom group rule failed: %v", err)
+	}
+	customGroup, err = groupSvc.GetGroup(customGroup.Id)
+	if err != nil {
+		t.Fatalf("reload custom group failed: %v", err)
+	}
+	egressA := createTestRuleEgress(t, "tx-normal-a")
+	egressB := createTestRuleEgress(t, "tx-normal-b")
+	inbound := createTestRuleInbound(t, 33205, "tx-normal-inbound")
+
+	allRule, err := ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficAll, EgressId: egressA.Id})
+	if err != nil {
+		t.Fatalf("create all failed: %v", err)
+	}
+	customRule, err := ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficCustomDomain, CustomDomain: "full:tx-normal.example.com", EgressId: egressA.Id})
+	if err != nil {
+		t.Fatalf("create direct custom failed: %v", err)
+	}
+	groupRule, err := ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, GroupId: customGroup.Id, EgressId: egressA.Id})
+	if err != nil {
+		t.Fatalf("create custom group execution failed: %v", err)
+	}
+	aiRule, err := ruleSvc.CreateSimpleRule(&CreateSimpleRuleRequest{InboundId: inbound.Id, GroupId: aiGroup.Id, EgressId: egressA.Id})
+	if err != nil {
+		t.Fatalf("create ai execution failed: %v", err)
+	}
+
+	if _, err := ruleSvc.UpdateSimpleRule(allRule.RuleId, &CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficAll, EgressId: egressB.Id}); err != nil {
+		t.Fatalf("update all failed: %v", err)
+	}
+	updatedCustomRule, err := ruleSvc.UpdateSimpleRule(customRule.RuleId, &CreateSimpleRuleRequest{InboundId: inbound.Id, TrafficType: simpleTrafficCustomDomain, CustomDomain: "domain:tx-normal.example.com", EgressId: egressB.Id})
+	if err != nil {
+		t.Fatalf("update direct custom failed: %v", err)
+	}
+	customRule = updatedCustomRule
+	if _, err := ruleSvc.UpdateSimpleRule(groupRule.RuleId, &CreateSimpleRuleRequest{InboundId: inbound.Id, GroupId: customGroup.Id, EgressId: egressB.Id}); err != nil {
+		t.Fatalf("update custom group execution failed: %v", err)
+	}
+	if _, err := ruleSvc.UpdateSimpleRule(aiRule.RuleId, &CreateSimpleRuleRequest{InboundId: inbound.Id, GroupId: aiGroup.Id, EgressId: egressB.Id}); err != nil {
+		t.Fatalf("update ai execution failed: %v", err)
+	}
+
+	for _, ruleID := range []string{customRule.RuleId, groupRule.RuleId, aiRule.RuleId, allRule.RuleId} {
+		if err := ruleSvc.DeleteSimpleRule(ruleID); err != nil {
+			t.Fatalf("delete simple rule %s failed: %v", ruleID, err)
+		}
+	}
+	if list := mustListSimpleRules(t, ruleSvc); len(list.Rules) != 0 {
+		t.Fatalf("expected empty simple rule list after deletes: %#v", list.Rules)
 	}
 }
 
@@ -1217,5 +1425,35 @@ func assertRoutingPrefix(t *testing.T, got []string, want []string) {
 		if got[index] != expected {
 			t.Fatalf("unexpected routing order at %d: got=%v want-prefix=%v", index, got, want)
 		}
+	}
+}
+
+func captureSimpleRuleDBState(t *testing.T) string {
+	t.Helper()
+	state := struct {
+		Policies []*n5model.TrafficPolicy
+		Bindings []*n5model.TrafficPolicyBinding
+		Rules    []*n5model.TrafficPolicyRule
+	}{}
+	if err := database.GetDB().Model(&n5model.TrafficPolicy{}).Order("id asc").Find(&state.Policies).Error; err != nil {
+		t.Fatalf("capture policies failed: %v", err)
+	}
+	if err := database.GetDB().Model(&n5model.TrafficPolicyBinding{}).Order("id asc").Find(&state.Bindings).Error; err != nil {
+		t.Fatalf("capture bindings failed: %v", err)
+	}
+	if err := database.GetDB().Model(&n5model.TrafficPolicyRule{}).Order("id asc").Find(&state.Rules).Error; err != nil {
+		t.Fatalf("capture rules failed: %v", err)
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal db state failed: %v", err)
+	}
+	return string(data)
+}
+
+func assertSimpleRuleDBStateEqual(t *testing.T, want string) {
+	t.Helper()
+	if got := captureSimpleRuleDBState(t); got != want {
+		t.Fatalf("simple rule DB state changed after rollback:\ngot:  %s\nwant: %s", got, want)
 	}
 }

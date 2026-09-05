@@ -9,12 +9,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"x-ui/database"
 	"x-ui/database/model"
 	n5model "x-ui/database/model/n5"
 	"x-ui/logger"
 	"x-ui/util/common"
 	coreservice "x-ui/web/service"
 	n5service "x-ui/web/service/n5"
+
+	"gorm.io/gorm"
 )
 
 const (
@@ -185,11 +188,12 @@ type simplePolicyContext struct {
 }
 
 type RuleService struct {
-	inboundService  inboundManager
-	egressService   egressManager
-	policyService   trafficPolicyManager
-	templateService trafficTemplateManager
-	groupService    trafficRuleGroupManager
+	inboundService   inboundManager
+	egressService    egressManager
+	policyService    trafficPolicyManager
+	templateService  trafficTemplateManager
+	groupService     trafficRuleGroupManager
+	mutationTestHook func(stage string) error
 }
 
 func NewRuleService() *RuleService {
@@ -235,6 +239,48 @@ func (s *RuleService) getGroupService() trafficRuleGroupManager {
 		return s.groupService
 	}
 	return NewTrafficRuleGroupService()
+}
+
+const (
+	simpleMutationHookAfterEnsurePolicy = "after-ensure-policy"
+	simpleMutationHookAfterAppendRules  = "after-append-rules"
+	simpleMutationHookAfterPolicyUpdate = "after-policy-update"
+	simpleMutationHookAfterRuleUpdate   = "after-rule-update"
+	simpleMutationHookAfterRuleDelete   = "after-rule-delete"
+)
+
+func (s *RuleService) withSimpleRuleTransaction(fn func(*RuleService) (*SimpleRule, error)) (*SimpleRule, error) {
+	policyService, ok := s.getPolicyService().(*n5service.TrafficPolicyService)
+	if !ok {
+		return fn(s)
+	}
+
+	var result *SimpleRule
+	err := database.GetDB().Transaction(func(tx *gorm.DB) error {
+		txService := *s
+		txService.policyService = policyService.WithDB(tx)
+		item, err := fn(&txService)
+		if err != nil {
+			return err
+		}
+		result = item
+		return nil
+	})
+	return result, err
+}
+
+func (s *RuleService) withSimpleRuleErrorTransaction(fn func(*RuleService) error) error {
+	_, err := s.withSimpleRuleTransaction(func(txService *RuleService) (*SimpleRule, error) {
+		return nil, fn(txService)
+	})
+	return err
+}
+
+func (s *RuleService) runSimpleMutationHook(stage string) error {
+	if s.mutationTestHook == nil {
+		return nil
+	}
+	return s.mutationTestHook(stage)
 }
 
 func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
@@ -384,6 +430,12 @@ func (s *RuleService) ListSimpleRules() (*SimpleRuleListResult, error) {
 }
 
 func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRule, error) {
+	return s.withSimpleRuleTransaction(func(txService *RuleService) (*SimpleRule, error) {
+		return txService.createSimpleRule(req)
+	})
+}
+
+func (s *RuleService) createSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRule, error) {
 	if req == nil {
 		return nil, common.NewError("simple rule request is nil")
 	}
@@ -407,6 +459,9 @@ func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 	if err != nil {
 		return nil, err
 	}
+	if err := s.runSimpleMutationHook(simpleMutationHookAfterEnsurePolicy); err != nil {
+		return nil, err
+	}
 
 	if trafficType == simpleTrafficAll {
 		if strings.EqualFold(ctx.Policy.DefaultTargetType, "egress") && ctx.Policy.DefaultTargetId > 0 {
@@ -421,6 +476,9 @@ func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 			DefaultTargetId:   egress.Id,
 		})
 		if err != nil {
+			return nil, err
+		}
+		if err := s.runSimpleMutationHook(simpleMutationHookAfterPolicyUpdate); err != nil {
 			return nil, err
 		}
 		ctx.Policy = updated
@@ -454,6 +512,9 @@ func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 		if err != nil {
 			return nil, err
 		}
+		if err := s.runSimpleMutationHook(simpleMutationHookAfterAppendRules); err != nil {
+			return nil, err
+		}
 	case simpleTrafficCustomDomain:
 		item, err = s.buildExecutionItemFromRequest(req, trafficType, nil)
 		if err != nil {
@@ -480,6 +541,9 @@ func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 		}
 		item.CustomDomain = displayValue
 		item.RuleIDs = []int{rule.Id}
+		if err := s.runSimpleMutationHook(simpleMutationHookAfterAppendRules); err != nil {
+			return nil, err
+		}
 	case simpleTrafficAI, simpleTrafficGame, simpleTrafficStreaming:
 		group, err := s.findBuiltinGroupByType(trafficType)
 		if err != nil {
@@ -501,6 +565,9 @@ func (s *RuleService) CreateSimpleRule(req *CreateSimpleRuleRequest) (*SimpleRul
 		item.GroupType = group.GroupType
 		item.RuleIDs, err = s.appendGroupSnapshotRules(ctx.Policy.Id, egress.Id, group)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.runSimpleMutationHook(simpleMutationHookAfterAppendRules); err != nil {
 			return nil, err
 		}
 	default:
@@ -594,6 +661,12 @@ func (s *RuleService) CheckSimpleRuleConflicts(req *CreateSimpleRuleRequest, edi
 }
 
 func (s *RuleService) UpdateSimpleRule(ruleID string, req *CreateSimpleRuleRequest) (*SimpleRule, error) {
+	return s.withSimpleRuleTransaction(func(txService *RuleService) (*SimpleRule, error) {
+		return txService.updateSimpleRule(ruleID, req)
+	})
+}
+
+func (s *RuleService) updateSimpleRule(ruleID string, req *CreateSimpleRuleRequest) (*SimpleRule, error) {
 	if strings.TrimSpace(ruleID) == "" {
 		return nil, common.NewError("rule id is required")
 	}
@@ -647,6 +720,9 @@ func (s *RuleService) UpdateSimpleRule(ruleID string, req *CreateSimpleRuleReque
 		if err != nil {
 			return nil, err
 		}
+		if err := s.runSimpleMutationHook(simpleMutationHookAfterPolicyUpdate); err != nil {
+			return nil, err
+		}
 		return buildDefaultSimpleRule(policy, ctx.Binding, ctx.Inbound, policy.Enabled && ctx.Binding.Enabled, egress), nil
 	}
 
@@ -667,6 +743,9 @@ func (s *RuleService) UpdateSimpleRule(ruleID string, req *CreateSimpleRuleReque
 		}); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.runSimpleMutationHook(simpleMutationHookAfterRuleUpdate); err != nil {
+		return nil, err
 	}
 	ctx.Rules, _ = s.getPolicyService().ListRules(ctx.Policy.Id)
 	ctx.RuleMap = buildRuleMap(ctx.Rules)
@@ -712,6 +791,9 @@ func (s *RuleService) updateCustomDomainSimpleRule(ctx *simplePolicyContext, ite
 	}); err != nil {
 		return nil, err
 	}
+	if err := s.runSimpleMutationHook(simpleMutationHookAfterRuleUpdate); err != nil {
+		return nil, err
+	}
 	item.CustomDomain = displayValue
 	if err := s.saveExecutionRemark(ctx.Policy, ctx.ExecRemark); err != nil {
 		return nil, err
@@ -725,6 +807,12 @@ func (s *RuleService) updateCustomDomainSimpleRule(ctx *simplePolicyContext, ite
 }
 
 func (s *RuleService) DeleteSimpleRule(ruleID string) error {
+	return s.withSimpleRuleErrorTransaction(func(txService *RuleService) error {
+		return txService.deleteSimpleRule(ruleID)
+	})
+}
+
+func (s *RuleService) deleteSimpleRule(ruleID string) error {
 	if strings.TrimSpace(ruleID) == "" {
 		return common.NewError("rule id is required")
 	}
@@ -748,6 +836,9 @@ func (s *RuleService) DeleteSimpleRule(ruleID string) error {
 		}); err != nil {
 			return err
 		}
+		if err := s.runSimpleMutationHook(simpleMutationHookAfterPolicyUpdate); err != nil {
+			return err
+		}
 		return s.cleanupEmptyExecutionPolicy(ctx.Policy.Id)
 	}
 
@@ -757,6 +848,9 @@ func (s *RuleService) DeleteSimpleRule(ruleID string) error {
 	}
 	for _, rule := range itemRules {
 		if err := s.getPolicyService().DeleteRule(rule.Id); err != nil {
+			return err
+		}
+		if err := s.runSimpleMutationHook(simpleMutationHookAfterRuleDelete); err != nil {
 			return err
 		}
 	}
@@ -1109,6 +1203,9 @@ func (s *RuleService) updateLegacySimpleRule(ctx *simplePolicyContext, req *Crea
 		if err != nil {
 			return nil, err
 		}
+		if err := s.runSimpleMutationHook(simpleMutationHookAfterPolicyUpdate); err != nil {
+			return nil, err
+		}
 		return buildDefaultSimpleRule(policy, ctx.Binding, ctx.Inbound, policy.Enabled && ctx.Binding.Enabled, egress), nil
 	}
 
@@ -1125,6 +1222,9 @@ func (s *RuleService) updateLegacySimpleRule(ctx *simplePolicyContext, req *Crea
 		}); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.runSimpleMutationHook(simpleMutationHookAfterRuleUpdate); err != nil {
+		return nil, err
 	}
 	ctx.Rules, _ = s.getPolicyService().ListRules(ctx.Policy.Id)
 	ctx.RuleMap = buildRuleMap(ctx.Rules)
