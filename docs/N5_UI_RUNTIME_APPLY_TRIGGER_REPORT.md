@@ -17,7 +17,7 @@ N5-UI 在 Phase2、Phase3、Phase3.5 期间已经完成了出口、策略、模�
 - 指定流量没有进入 N5 出口
 - 数据库状态与 Xray 运行状态不一致
 
-这个问题在真实测试服务器 `8.218.149.174` 上被复现，并最终确认不是出口测试、不是规则生成、也不是 N5 Merge 逻辑本身故障，而是配置变更后没有自动进入 Xray apply 链。
+这个问题在真实测试服务器 `<TEST_SERVER>` 上被复现，并最终确认不是出口测试、不是规则生成、也不是 N5 Merge 逻辑本身故障，而是配置变更后没有自动进入 Xray apply 链。
 
 ## 2. 根因
 
@@ -290,7 +290,7 @@ xrayService.SetToNeedRestart()
 
 真实验证服务器：
 
-- `8.218.149.174`
+- `<TEST_SERVER>`
 
 测试入口：
 
@@ -301,8 +301,8 @@ xrayService.SetToNeedRestart()
 
 - egress tag: `n5-egress-0000000001`
 - protocol: `socks`
-- address: `gjalysg.88988588.xyz:15513`
-- SOCKS 出口公网 IP: `47.236.83.182`
+- address: `<TEST_DOMAIN>:<TEST_PORT>`
+- SOCKS 出口公网 IP: `<REDACTED_SOURCE_IP>`
 
 测试规则：
 
@@ -321,8 +321,8 @@ xrayService.SetToNeedRestart()
 
 验证结果：
 
-- `api64.ipify.org` 返回：`47.236.83.182`
-- `api.ipify.org` 返回：`8.218.149.174`
+- `api64.ipify.org` 返回：`<REDACTED_SOURCE_IP>`
+- `api.ipify.org` 返回：`<TEST_SERVER>`
 
 access 日志命中证据：
 
@@ -394,6 +394,6 @@ database is locked
 - 所有关键 N5 配置修改都会自动进入 Xray apply 链
 - `config.json` 与数据库状态保持一致
 - `n5_xray_config_history` 能记录运行应用结果
-- 真实分流已在服务器 `8.218.149.174` 上验证通过
+- 真实分流已在服务器 `<TEST_SERVER>` 上验证通过
 
 这次修复适合作为 `v0.1.1` 发布内容。

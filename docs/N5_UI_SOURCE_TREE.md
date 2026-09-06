@@ -1,8 +1,30 @@
 # N5-UI Source Tree
 
-更新时间：2026-08-10  
-适用版本：`v0.1.0-beta-simple` 整理基线  
-说明：本文档以当前 `/root/n5-ui` 仓库状态为准，重点描述 N5-UI 自有开发面。`xray-core/` 为 vendored 上游子树，不建议作为日常二开入口。
+更新时间：2026-09-06
+适用版本：`v0.2.0` Stable
+说明：本文档以公开仓库 `torr9522/n5-ui` 为准，重点描述 N5-UI 自有开发面。`xray-core/` 为 vendored 上游子树，不建议作为日常二开入口。
+
+## v0.2.0 Handoff Map
+
+- DB models: `database/model/n5/models.go`
+- DB migration/bootstrap: `database/n5_phase2.go`
+- N5 services: `web/service/n5/`
+- N5 Simple services: `web/service/n5/simple/`
+- N5 controllers: `web/controller/n5/`
+- N5 Simple controllers: `web/controller/n5/simple/`
+- N5 frontend pages: `web/html/n5/`
+- Sidebar navigation: `web/html/xui/common_sider.html`
+- Xray config merge: `web/service/n5/xray_merge.go`,
+  `web/service/n5/xray_ext.go`, `web/service/xray.go`
+- Subscription: `web/service/subscription.go`, `web/service/share_link.go`,
+  `web/controller/subscription.go`
+- Access IP: `web/controller/access_ip.go`, `web/service/access_ip.go`,
+  `web/job/access_ip_aggregation.go`
+- Installer/runtime scripts: `install.sh`, `install_en.sh`, `x-ui.sh`,
+  `x-ui_en.sh`
+- Release/version metadata: `config/version`, `RELEASE-v0.2.0.md`
+- Tests: `*_test.go`, especially `web/service/n5/`,
+  `web/service/n5/simple/`, `web/controller/n5/`, and `database/`
 
 ## 1. 项目整体结构
 

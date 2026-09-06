@@ -28,6 +28,9 @@ N5-UI 是基于 n3-ui 建立的独立二开项目，当前安装与发布源已�
 - [快捷方式](#快捷方式)  
 - [维护说明](./docs/MAINTENANCE_NOTES.md)
 - [备份记录](./docs/BACKUP_LOG.md)
+- [Codex 接手文档](./docs/CODEX_HANDOFF.md)
+- [开发技能树](./docs/DEVELOPMENT_SKILL_TREE.md)
+- [公开开发历史](./docs/history/README.md)
 - [变更记录](#变更记录)
 
 # 功能介绍

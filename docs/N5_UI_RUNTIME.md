@@ -18,6 +18,7 @@ N5-UI 从本阶段开始固定自己的 Xray Runtime，不再依赖 `torr9522/n3
 
 - N5 版本：`v0.2.0`
 - 固定 Xray 版本：`26.5.3`
+- Xray binary SHA256：`128f9c34811ee74b3770eef7010d011e3946e85dfab28f2ed1804e380461b05e`
 - 参考运行验证日期：2026-08-18
 - 已验证架构：
   - `amd64`
@@ -95,3 +96,10 @@ xray=26.5.3
 - 如果 GitHub release 未上传上述资产，公网安装会失败
 - 本地源码安装可通过仓库内 `releases/` 资产完成独立安装验证
 - 本次 runtime 切换仅支持 amd64/x86_64
+
+## 8. Why Custom Runtime
+
+N5-UI fixes the runtime to the validated N5 custom Xray 26.5.3 amd64 asset so
+that routing behavior and Access IP log marker compatibility remain stable.
+Use redacted examples such as `[inbound-12345]` in public documentation; do not
+publish real access logs or source IPs.

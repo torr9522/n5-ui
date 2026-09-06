@@ -92,7 +92,7 @@ Fresh install 完成后，远端服务器 `/usr/local/x-ui` 中实际验证到�
 
 测试服务器：
 
-- IP：`18.142.253.221`
+- IP：`<REDACTED_SOURCE_IP>`
 - 系统：`Debian GNU/Linux 11 (bullseye)`
 - 内核：`5.10.0-32-amd64`
 
@@ -178,7 +178,7 @@ Fresh install 完成后，远端服务器 `/usr/local/x-ui` 中实际验证到�
 
 - 创建成功
 - 客户端连接成功
-- 出口 IP：`18.142.253.221`
+- 出口 IP：`<REDACTED_SOURCE_IP>`
 - 观测延迟：约 `264ms`
 - access.log 命中：
   - `accepted tcp:api.ipify.org:443 email: accept-vmess@test`
@@ -197,7 +197,7 @@ Fresh install 完成后，远端服务器 `/usr/local/x-ui` 中实际验证到�
 - 创建成功
 - Reality 握手成功
 - 客户端连接成功
-- 出口 IP：`18.142.253.221`
+- 出口 IP：`<REDACTED_SOURCE_IP>`
 - 观测延迟：约 `5319ms`
 - access.log 命中：
   - `accepted tcp:api.ipify.org:443 email: accept-vless@test`
@@ -224,7 +224,7 @@ Fresh install 完成后，远端服务器 `/usr/local/x-ui` 中实际验证到�
 
 - 创建成功
 - 客户端连接成功
-- 出口 IP：`18.142.253.221`
+- 出口 IP：`<REDACTED_SOURCE_IP>`
 - 观测延迟：约 `306ms`
 - access.log 命中：
   - `accepted tcp:api.ipify.org:443 email: accept-trojan@test`
@@ -242,7 +242,7 @@ Fresh install 完成后，远端服务器 `/usr/local/x-ui` 中实际验证到�
 
 - 创建成功
 - 客户端连接成功
-- 出口 IP：`18.142.253.221`
+- 出口 IP：`<REDACTED_SOURCE_IP>`
 - 观测延迟：约 `298ms`
 - access.log 成功命中目标请求
 - error.log 无异常
@@ -282,7 +282,7 @@ Fresh install 完成后，远端服务器 `/usr/local/x-ui` 中实际验证到�
 出口测试结果：
 
 - `status = success`
-- `exitIp = 43.161.215.226`
+- `exitIp = <REDACTED_SOURCE_IP>`
 
 说明：
 
@@ -359,7 +359,7 @@ Simple 规则验证点：
 - 规则：`full:api64.ipify.org`
 - 出口：`n5-egress-0000000001`
 - 出口服务器：`n5-uics.527270.xyz:38963`
-- 出口测试 IP：`43.161.215.226`
+- 出口测试 IP：`<REDACTED_SOURCE_IP>`
 
 生成后的最终配置片段确认如下：
 
@@ -394,9 +394,9 @@ routing：
 真实流量结果：
 
 - 访问 `api64.ipify.org`
-  - 返回：`43.161.215.226`
+  - 返回：`<REDACTED_SOURCE_IP>`
 - 访问 `api.ipify.org`
-  - 返回：`18.142.253.221`
+  - 返回：`<REDACTED_SOURCE_IP>`
 
 access.log 同时给出直接证据：
 

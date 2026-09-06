@@ -21,6 +21,12 @@ If you need more language options ,please open a issue and let me know that
 - Runtime identity: `x-ui` compatible
 - Install command, binary name, service name, API path, and database layout are unchanged in this phase
 
+## Developer / Maintainer Documentation
+
+- [Codex handoff](./docs/CODEX_HANDOFF.md)
+- [Development skill tree](./docs/DEVELOPMENT_SKILL_TREE.md)
+- [Public development history](./docs/history/README.md)
+
 # Changes   
 - 2026.08.08：Create the independent `n5-ui` project and finish phase-1 branding migration while keeping `x-ui` runtime compatibility intact  
 - 2023.07.18：Random Reality dest and serverNames;more detailed sniffing settings available  

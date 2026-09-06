@@ -1,13 +1,15 @@
 # N5-UI Database
 
-更新时间：2026-08-10  
-适用版本：`v0.1.0-beta-simple`
+更新时间：2026-09-06
+适用版本：`v0.2.0` Stable
 
 ## 1. 数据库说明
 
 - 原数据库：SQLite
 - 原核心表：`users`、`inbounds`、`settings`、`access_ip_records`
 - N5 扩展策略：不改旧表主结构，新增 `n5_` 独立表；必要状态字段追加到 N5 自己的表中
+- v0.2.0 hardening 未引入大规模 DB schema redesign；重点是引用保护、事务边界、ownership 检查和一致性验证。
+- Simple-managed ownership markers: `n5-simple-exec|` and legacy `n5-simple|`.
 
 ## 2. N5 表清单
 
@@ -320,6 +322,19 @@ n5_traffic_policies
 inbounds
   -> n5_traffic_policy_bindings.inbound_id
 ```
+
+### 4.1 v0.2.0 Consistency Expectations
+
+Stable validation requires these counters to be zero after runtime gates:
+
+- orphan policy
+- orphan rule
+- orphan binding
+- missing egress target
+- missing inbound binding
+- metadata missing rule IDs
+- duplicate binding
+- pool member missing egress
 
 ## 5. 与运行时的映射
 
