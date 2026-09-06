@@ -1,7 +1,7 @@
 # N5-UI Runtime
 
-更新时间：2026-08-18
-适用版本：`v0.1.0-beta-simple`
+更新时间：2026-09-06
+适用版本：`v0.2.0`
 
 ## 1. 目标
 
@@ -16,7 +16,7 @@ N5-UI 从本阶段开始固定自己的 Xray Runtime，不再依赖 `torr9522/n3
 
 ## 2. 固定 Runtime 基线
 
-- N5 版本：`v0.1.0-beta-simple`
+- N5 版本：`v0.2.0`
 - 固定 Xray 版本：`26.5.3`
 - 参考运行验证日期：2026-08-18
 - 已验证架构：
@@ -35,13 +35,13 @@ N5-UI Runtime 资产采用以下固定文件名：
 GitHub Release 目标路径格式：
 
 ```text
-https://github.com/torr9522/n5-ui/releases/download/v0.1.1-runtime-26.5.3-amd64/<asset>
+https://github.com/torr9522/n5-ui/releases/download/v0.2.0/<asset>
 ```
 
 示例：
 
 ```text
-https://github.com/torr9522/n5-ui/releases/download/v0.1.1-runtime-26.5.3-amd64/Xray-linux-64.zip
+https://github.com/torr9522/n5-ui/releases/download/v0.2.0/Xray-linux-64.zip
 ```
 
 ## 4. 当前下载链路
@@ -70,7 +70,7 @@ https://github.com/torr9522/n5-ui/releases/download/v0.1.1-runtime-26.5.3-amd64/
 `config/version` 采用键值格式：
 
 ```text
-version=v0.1.0-beta-simple
+version=v0.2.0
 xray=26.5.3
 ```
 
@@ -81,7 +81,7 @@ xray=26.5.3
 
 ## 6. 发布要求
 
-要让公网一键安装完全可用，`torr9522/n5-ui` 的 `v0.1.1-runtime-26.5.3-amd64` release 至少需要包含：
+要让公网一键安装完全可用，`torr9522/n5-ui` 的 `v0.2.0` release 至少需要包含：
 
 - `Xray-linux-64.zip`
 

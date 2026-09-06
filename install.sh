@@ -7,11 +7,11 @@ plain='\033[0m'
 
 cur_dir=$(pwd)
 INSTALL_SCRIPT_DIR=""
-XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n5-ui/main}"
+XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n5-ui/v0.2.0}"
 XUI_REPO_URL="${XUI_REPO_URL:-https://github.com/torr9522/n5-ui.git}"
-XUI_REPO_BRANCH="${XUI_REPO_BRANCH:-main}"
+XUI_REPO_BRANCH="${XUI_REPO_BRANCH:-v0.2.0}"
 INSTALL_MODE="${INSTALL_MODE:-source}"
-XUI_RELEASE_TAG="${XUI_RELEASE_TAG:-v0.1.1-runtime-26.5.3-amd64}"
+XUI_RELEASE_TAG="${XUI_RELEASE_TAG:-v0.2.0}"
 XUI_RELEASES_BASE="${XUI_RELEASES_BASE:-${XUI_RELEASES_RAW_BASE:-https://github.com/torr9522/n5-ui/releases/download/${XUI_RELEASE_TAG}}}"
 XUI_XRAY_VERSION="${XUI_XRAY_VERSION:-26.5.3}"
 

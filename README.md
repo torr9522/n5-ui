@@ -1,6 +1,14 @@
 # N5-UI
 简体中文|[ENGLISH](./README_EN.md)  
 
+## N5-UI v0.2.0 Stable
+
+本版本已在全新 Debian 11 Bullseye amd64/x86_64 环境完成安装、真实重启、桌面与移动端验证，以及 TCP/UDP、订阅、Access IP 和数据库一致性验证。
+
+正式运行时为 N5-UI 自带的 Xray 26.5.3 amd64：
+
+`128f9c34811ee74b3770eef7010d011e3946e85dfab28f2ed1804e380461b05e`
+
 > 声明：该项目仅供个人学习、交流，请遵守当地法律法规,勿用于非法用途;请勿用于生产环境  
 > 声明：该项目已闭源，介意者请勿使用；如您需要开源代码，请附上您的Github Profile邮箱联系  
 
@@ -26,33 +34,35 @@ N5-UI 是基于 n3-ui 建立的独立二开项目，当前安装与发布源已�
 
 - 系统状态监控
 - 支持单端口多用户、多协议，网页可视化操作
-- 支持的协议：vmess、vless、trojan、shadowsocks、shadowsocks 2022、dokodemo-door、socks、http
+- 支持的协议：vmess、vless、trojan、shadowsocks、dokodemo-door、socks、http
 - 支持配置更多传输配置：http、tcp、ws、grpc、kcp、quic
 - 流量统计，限制流量，限制到期时间，一键重置与设备监控
 - 可自定义 xray 配置模板
 - 支持 https 访问面板（自备域名 + ssl 证书）
 - 支持一键SSL证书申请且自动续签
 - Telegram bot通知、控制功能
+- N5出口、出口规则、分流规则和自定义规则组
+- ALL、AI、Game、Streaming 分流
+- 固定路由优先级与规则冲突提示
+- Subscription Lite 与 Access IP
 - 更多高级配置项，详见面板 
 
 :bulb:具体**使用、配置细节以及问题排查**请点击这里:point_right:[WIKI](https://github.com/torr9522/n5-ui/wiki):point_left:
  Specific **Usages、Configurations and Debug** please refer to [WIKI](https://github.com/torr9522/n5-ui/wiki)
 # 一键安装
-在安装前请确保你的系统支持`bash`环境,且系统网络正常。源码安装模式会自动补齐 Go 工具链，当前脚本内置版本为 `Go 1.22.7`，最低要求为 `Go 1.16+`。  
+在安装前请确保你的系统支持`bash`环境,且系统网络正常。当前正式验证环境为 Debian 11 Bullseye amd64/x86_64。源码安装模式会自动补齐 Go 工具链，当前脚本内置版本为 `Go 1.22.7`，最低要求为 `Go 1.16+`。
 
-&#x26A1;从原版升级也可使用该命令，数据不会丢失&#x26A1;
+本版本推荐在全新 Debian 系统上安装。当前版本暂不承诺旧版本原地升级兼容性；如需更换版本，建议先完整备份 `/etc/x-ui`、数据库和重要配置。
 
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/v0.2.0/install.sh)
 ```    
 For English Users,please use the following command to install English supported version:  
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install_en.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/v0.2.0/install_en.sh)
 ```
-如需安装指定的版本,可以在上述命令中指定版本号,如指定版本为`v0.1.1-runtime-26.5.3-amd64`,安装命令如下：
-```  
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install.sh) v0.1.1-runtime-26.5.3-amd64
-```
+
+当前 Stable Runtime 仅正式支持 amd64/x86_64。ARM64 源码可能包含兼容代码，但本版本不提供 ARM64 Stable Runtime 承诺。
 
 # 效果预览  
 `面板使用`:  

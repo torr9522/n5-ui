@@ -1,7 +1,7 @@
 # N5-UI Deployment
 
-更新时间：2026-08-10  
-适用版本：`v0.1.0-beta-simple`
+更新时间：2026-09-06
+适用版本：`v0.2.0`
 
 ## 1. 部署原则
 
@@ -25,19 +25,20 @@
 当前默认安装命令：
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/v0.2.0/install.sh)
 ```
 
 英文安装：
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/main/install_en.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/torr9522/n5-ui/v0.2.0/install_en.sh)
 ```
 
 说明：
 
 - `x-ui` 仍然是运行时命令名，但安装脚本默认拉取 `torr9522/n5-ui`。
 - 安装脚本会把程序部署到 `/usr/local/x-ui`。
+- 本版本推荐全新安装，暂不承诺旧版本原地升级兼容性。
 
 ### 2.2 Go 版本要求
 
@@ -70,49 +71,17 @@ go build -o x-ui .
 | `/usr/bin/x-ui` | 运维管理脚本入口 |
 | `/etc/systemd/system/x-ui.service` 或系统加载副本 | systemd 服务 |
 
-## 4. 升级流程
+## 4. 升级策略
 
-### 4.1 本地升级前检查
+本版本暂不承诺旧版本原地升级兼容性，也不保证直接覆盖安装不会产生数据或配置问题。
 
-```bash
-cd /root/n5-ui
-git status
-go test ./...
-go build -o x-ui.new .
-```
+如需更换版本，推荐：
 
-检查项：
+1. 完整备份 `/etc/x-ui`、数据库和重要配置。
+2. 使用全新 Debian 11 amd64/x86_64 系统安装 `v0.2.0`。
+3. 根据实际兼容性和备份内容，由管理员自行评估数据恢复。
 
-- 工作区是否干净
-- 是否存在未审查文档或测试产物
-- `go test ./...` 是否通过
-- `go build` 是否通过
-
-### 4.2 远端升级原则
-
-不要覆盖：
-
-- `/etc/x-ui/x-ui.db`
-- `/usr/local/x-ui/bin/config.json`
-- systemd service 文件
-
-只更新：
-
-- 程序源码
-- 前端页面
-- N5 扩展模块
-- 二进制
-
-### 4.3 推荐升级步骤
-
-```bash
-cd /usr/local/x-ui
-go test ./...
-go build -o x-ui.new .
-mv x-ui.new x-ui
-systemctl restart x-ui
-systemctl is-active x-ui
-```
+正式 Upgrade Gate 将作为独立的发布后兼容性实验执行。
 
 ## 5. 备份
 
@@ -274,11 +243,11 @@ systemctl start x-ui
 
 ## 11. 当前版本发布建议
 
-建议发布名：
+当前发布名：
 
-- `v0.1.0-beta-simple`
+- `v0.2.0`
 
-建议发布说明核心点：
+当前发布说明核心点：
 
 - 完成 N5 品牌迁移
 - 完成高级出口 / 线路池 / 分流 / merge
