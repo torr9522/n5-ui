@@ -1,0 +1,504 @@
+diff --git a/common/buf/data/test_MultiBufferReadAllToByte.dat b/common/buf/data/test_MultiBufferReadAllToByte.dat
+deleted file mode 100644
+index 83cb9032..00000000
+--- a/common/buf/data/test_MultiBufferReadAllToByte.dat
++++ /dev/null
+@@ -1,39 +0,0 @@
+-
+-???8+?$??I????+??????+?+++?IO7$ZD88ZDMD8OZ$7II7+++++++++++++
+-+??7++???I????????+?+++?+I?IZI$OND7ODDDDDD7Z$IZI++++++++++++
+-???I????????????~,...~?++I?777$DD8O8DDD88O$O7$7I++++++++++?+
+-???????????????.,::~...,+?I77ZZD8ZDNDDDDD8ZZ7$$7+++++++?+?+?
+-??????????????.,,:~~~==,I?7$$ZOD8ODNDD8DDZ$87777++?+++?????+
+-?????????I?=...:~~~~=~=+I?$$ZODD88ND8N8DDOZOZ77?????++??????
+-???II?????.,,,:==~~===I?IIZ$O$88ODD8ODNDDDOO$7$??I?++?++++??
+-???I????+..,,~=+???+?????7OOZZ8O$$778DDDDDO87I$I++++++++????
+-I??????..,,:~=??????+=,~?ZZZ$$I??II$DDDDD8Z8I~,+=?II$777IIII
+-II???,.,,::~??I?I?....,,~==I?+===+?$ODN8DD$O=,......+?????II
+-I?I?..,,:~~????,...,,::::~~~~~~~~=+$88ODD88=~,,,.......IIIII
+-II,..,,:~~I?:..,,,::::~~~~~~~~~~~~~+IOZ87?~~~::::,,,,...=?II
+-I,...,:::....,:::::::~~~~~~~~~~~~~~~=++=~~~~~~~~~~~:::,,,?II
+-,,,,~....,,,::::::::::::::~~~~~~~~~~~~~~~~~~~~~~~~~~~::,,,??
+-:~:...,,,:::::::::::::::::::~~~~~~~~~~~~~~~~~~~~~~~~~~::,,II
+-:::::::::::::::::::~+++::::::~~~~~~~~~~~~~~~~~~~~~~~~::::,,7
+-::::::::::::::~IIII?????:::::::~~~~~~~~~~~~~~~~~~~~~::::::,I
+-:,,,,,,,:+ZIIIIIIIIIIIII:::~::~~~~~~~~~~~~~~~~~~~~=~::::::::
+-7I777IIZI7ZIIIIIIIIIIII7?:~~~~~~~~~~~~~~~~~~~~~~~~~=~:::::::
+-$$$77$7Z77$7I77IIII7III$$:~~~~~~~~~~~~~~~~~~~~~~~=II~:::::::
+-$$$8$Z7$7$Z777777777777Z7~:~~~~~~~~~~~~~~~~~~~~~~$777::::::,
+-ZOZOZOZZ$7$$ZZ$8DDDZ777$$=~~~~~~~~~~~~~~~~~~~~~~~$$$7~:::::,
+-OOZOOOZZOOZO$ZZZ$O$$$$7ZZ$~~~~~~~~~~~~~~~~~~~~~~~ZZ$ZZ:::::,
+-O88OOOOO8ODOZZZZZOOZ8OOOOO:~~~~~~~~~~~~~~~~~~~~~ZOZZZZ~:::::
+-8888O8OODZ8ZOZOZZOOZOOOOOZ:::~~~~~~~~~~~~~~~~~~~,Z$ZOOO:::::
+-Z88O88D8Z88ZZOOZZOZ$$Z$$OZ:::~~~~~~~~~~~~~~~~~~~,,ZOOOOO::::
+-888D88OODD8DNDNDNNDDDD88OI:::::~~~~~~~~~~~~~~~~~.,:8ZO8O::::
+-D8D88DO88ZOOZOO8DDDNOZ$$O8~::::~~~~~~~~~~~~~===~..,88O8OO:::
+-8OD8O8OODO$D8DO88DO8O8888O~~::~~::~~~~~~~~~~~===...:8OOOZ~::
+-:..................,~,..~,~~:~:~~~~~~~~~~~~~~===...,+.....~~
+-.........................~~~:~~~~~~~~~~~~~~~~~==:..,......:~
+-.Made with love.........,~~~~~~~~:~~~~::~~~~~~~==..,,......:
+-........................~~~~~~~~~~~~~~:~~~~~~~~===,.,......~
+-...................,,..~~~~~~~~~~~~~~~~~~~~~~~~~==~,,.......
+-..................,,::~~~~~~~~~~~~~~~~~~~~~~~~~====~.,....,.
+-....................:~~~~~~~~~~~~~~~~~~~~~~~~~~~~==~:......,
+-......................,~================,.==~~~=~===~,......
+-.Thank you for your support.....................:~=,,,,,,,..
+diff --git a/common/log/access.go b/common/log/access.go
+index 204212dc..e96b2cea 100644
+--- a/common/log/access.go
++++ b/common/log/access.go
+@@ -27,6 +27,7 @@ type AccessMessage struct {
+ 	Reason interface{}
+ 	Email  string
+ 	Detour string
++	InboundTag string
+ }
+ 
+ func (m *AccessMessage) String() string {
+@@ -39,6 +40,12 @@ func (m *AccessMessage) String() string {
+ 	builder.WriteByte(' ')
+ 	builder.WriteString(serial.ToString(m.To))
+ 
++	if len(m.InboundTag) > 0 {
++		builder.WriteString(" [")
++		builder.WriteString(m.InboundTag)
++		builder.WriteByte(']')
++	}
++
+ 	if len(m.Detour) > 0 {
+ 		builder.WriteString(" [")
+ 		builder.WriteString(m.Detour)
+diff --git a/common/mux/server.go b/common/mux/server.go
+index d1cdac11..2771417f 100644
+--- a/common/mux/server.go
++++ b/common/mux/server.go
+@@ -179,9 +179,12 @@ func (w *ServerWorker) handleStatusNew(ctx context.Context, meta *FrameMetadata,
+ 			Status: log.AccessAccepted,
+ 			Reason: "",
+ 		}
+-		if inbound := session.InboundFromContext(ctx); inbound != nil && inbound.Source.IsValid() {
+-			msg.From = inbound.Source
+-			msg.Email = inbound.User.Email
++		if inbound := session.InboundFromContext(ctx); inbound != nil {
++			msg.InboundTag = inbound.Tag
++			if inbound.Source.IsValid() {
++				msg.From = inbound.Source
++				msg.Email = inbound.User.Email
++			}
+ 		}
+ 		ctx = log.ContextWithAccessMessage(ctx, msg)
+ 	}
+diff --git a/main/distro/debug/debug.go b/main/distro/debug/debug.go
+deleted file mode 100644
+index 7448ecdf..00000000
+--- a/main/distro/debug/debug.go
++++ /dev/null
+@@ -1,11 +0,0 @@
+-package debug
+-
+-import (
+-	"net/http"
+-)
+-
+-func init() {
+-	go func() {
+-		http.ListenAndServe(":6060", nil)
+-	}()
+-}
+diff --git a/proxy/dokodemo/dokodemo.go b/proxy/dokodemo/dokodemo.go
+index 38bfa17c..ba3fdb84 100644
+--- a/proxy/dokodemo/dokodemo.go
++++ b/proxy/dokodemo/dokodemo.go
+@@ -147,6 +147,7 @@ func (d *DokodemoDoor) Process(ctx context.Context, network net.Network, conn st
+ 		To:     dest,
+ 		Status: log.AccessAccepted,
+ 		Reason: "",
++		InboundTag: inbound.Tag,
+ 	})
+ 	errors.LogInfo(ctx, "received request for ", conn.RemoteAddr())
+ 
+diff --git a/proxy/http/server.go b/proxy/http/server.go
+index 90a07b38..8d99ea90 100644
+--- a/proxy/http/server.go
++++ b/proxy/http/server.go
+@@ -150,10 +150,11 @@ Start:
+ 		return errors.New("malformed proxy host: ", host).AtWarning().Base(err)
+ 	}
+ 	ctx = log.ContextWithAccessMessage(ctx, &log.AccessMessage{
+-		From:   conn.RemoteAddr(),
+-		To:     request.URL,
+-		Status: log.AccessAccepted,
+-		Reason: "",
++		From:       conn.RemoteAddr(),
++		To:         request.URL,
++		Status:     log.AccessAccepted,
++		Reason:     "",
++		InboundTag: inbound.Tag,
+ 	})
+ 
+ 	if strings.EqualFold(request.Method, "CONNECT") {
+diff --git a/proxy/hysteria/server.go b/proxy/hysteria/server.go
+index 815faca1..9a872c55 100644
+--- a/proxy/hysteria/server.go
++++ b/proxy/hysteria/server.go
+@@ -128,6 +128,7 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
+ 				To:     "",
+ 				Status: log.AccessRejected,
+ 				Reason: err,
++				InboundTag: inbound.Tag,
+ 			})
+ 			return errors.New("failed to create request from: ", conn.RemoteAddr()).Base(err)
+ 		}
+@@ -143,6 +144,7 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
+ 			Status: log.AccessAccepted,
+ 			Reason: "",
+ 			Email:  inbound.User.Email,
++			InboundTag: inbound.Tag,
+ 		})
+ 		errors.LogInfo(ctx, "tunnelling request to ", dest)
+ 
+diff --git a/proxy/shadowsocks/server.go b/proxy/shadowsocks/server.go
+index 360ea38c..760405f5 100644
+--- a/proxy/shadowsocks/server.go
++++ b/proxy/shadowsocks/server.go
+@@ -199,6 +199,7 @@ func (s *Server) handleUDPPayload(ctx context.Context, conn stat.Connection, dis
+ 
+ func (s *Server) handleConnection(ctx context.Context, conn stat.Connection, dispatcher routing.Dispatcher) error {
+ 	sessionPolicy := s.policyManager.ForLevel(0)
++	inbound := session.InboundFromContext(ctx)
+ 	if err := conn.SetReadDeadline(time.Now().Add(sessionPolicy.Timeouts.Handshake)); err != nil {
+ 		return errors.New("unable to set read deadline").Base(err).AtWarning()
+ 	}
+@@ -207,16 +208,16 @@ func (s *Server) handleConnection(ctx context.Context, conn stat.Connection, dis
+ 	request, bodyReader, err := ReadTCPSession(s.validator, &bufferedReader)
+ 	if err != nil {
+ 		log.Record(&log.AccessMessage{
+-			From:   conn.RemoteAddr(),
+-			To:     "",
+-			Status: log.AccessRejected,
+-			Reason: err,
++			From:       conn.RemoteAddr(),
++			To:         "",
++			Status:     log.AccessRejected,
++			Reason:     err,
++			InboundTag: inbound.Tag,
+ 		})
+ 		return errors.New("failed to create request from: ", conn.RemoteAddr()).Base(err)
+ 	}
+ 	conn.SetReadDeadline(time.Time{})
+ 
+-	inbound := session.InboundFromContext(ctx)
+ 	if inbound == nil {
+ 		panic("no inbound metadata")
+ 	}
+@@ -224,11 +225,12 @@ func (s *Server) handleConnection(ctx context.Context, conn stat.Connection, dis
+ 
+ 	dest := request.Destination()
+ 	ctx = log.ContextWithAccessMessage(ctx, &log.AccessMessage{
+-		From:   conn.RemoteAddr(),
+-		To:     dest,
+-		Status: log.AccessAccepted,
+-		Reason: "",
+-		Email:  request.User.Email,
++		From:       conn.RemoteAddr(),
++		To:         dest,
++		Status:     log.AccessAccepted,
++		Reason:     "",
++		Email:      request.User.Email,
++		InboundTag: inbound.Tag,
+ 	})
+ 	errors.LogInfo(ctx, "tunnelling request to ", dest)
+ 
+diff --git a/proxy/shadowsocks_2022/inbound.go b/proxy/shadowsocks_2022/inbound.go
+index a889fa0f..66749d67 100644
+--- a/proxy/shadowsocks_2022/inbound.go
++++ b/proxy/shadowsocks_2022/inbound.go
+@@ -112,6 +112,7 @@ func (i *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata M.M
+ 		To:     metadata.Destination,
+ 		Status: log.AccessAccepted,
+ 		Email:  i.email,
++		InboundTag: inbound.Tag,
+ 	})
+ 	errors.LogInfo(ctx, "tunnelling request to tcp:", metadata.Destination)
+ 	dispatcher := session.DispatcherFromContext(ctx)
+@@ -133,6 +134,7 @@ func (i *Inbound) NewPacketConnection(ctx context.Context, conn N.PacketConn, me
+ 		To:     metadata.Destination,
+ 		Status: log.AccessAccepted,
+ 		Email:  i.email,
++		InboundTag: inbound.Tag,
+ 	})
+ 	errors.LogInfo(ctx, "tunnelling request to udp:", metadata.Destination)
+ 	dispatcher := session.DispatcherFromContext(ctx)
+diff --git a/proxy/shadowsocks_2022/inbound_multi.go b/proxy/shadowsocks_2022/inbound_multi.go
+index 4bfa086a..23d2baee 100644
+--- a/proxy/shadowsocks_2022/inbound_multi.go
++++ b/proxy/shadowsocks_2022/inbound_multi.go
+@@ -234,6 +234,7 @@ func (i *MultiUserInbound) NewConnection(ctx context.Context, conn net.Conn, met
+ 		To:     metadata.Destination,
+ 		Status: log.AccessAccepted,
+ 		Email:  user.Email,
++		InboundTag: inbound.Tag,
+ 	})
+ 	errors.LogInfo(ctx, "tunnelling request to tcp:", metadata.Destination)
+ 	dispatcher := session.DispatcherFromContext(ctx)
+@@ -259,6 +260,7 @@ func (i *MultiUserInbound) NewPacketConnection(ctx context.Context, conn N.Packe
+ 		To:     metadata.Destination,
+ 		Status: log.AccessAccepted,
+ 		Email:  user.Email,
++		InboundTag: inbound.Tag,
+ 	})
+ 	errors.LogInfo(ctx, "tunnelling request to udp:", metadata.Destination)
+ 	dispatcher := session.DispatcherFromContext(ctx)
+diff --git a/proxy/shadowsocks_2022/inbound_relay.go b/proxy/shadowsocks_2022/inbound_relay.go
+index 19afd462..7300e847 100644
+--- a/proxy/shadowsocks_2022/inbound_relay.go
++++ b/proxy/shadowsocks_2022/inbound_relay.go
+@@ -135,6 +135,7 @@ func (i *RelayInbound) NewConnection(ctx context.Context, conn net.Conn, metadat
+ 		To:     metadata.Destination,
+ 		Status: log.AccessAccepted,
+ 		Email:  user.Email,
++		InboundTag: inbound.Tag,
+ 	})
+ 	errors.LogInfo(ctx, "tunnelling request to tcp:", metadata.Destination)
+ 	dispatcher := session.DispatcherFromContext(ctx)
+@@ -158,6 +159,7 @@ func (i *RelayInbound) NewPacketConnection(ctx context.Context, conn N.PacketCon
+ 		To:     metadata.Destination,
+ 		Status: log.AccessAccepted,
+ 		Email:  user.Email,
++		InboundTag: inbound.Tag,
+ 	})
+ 	errors.LogInfo(ctx, "tunnelling request to udp:", metadata.Destination)
+ 	dispatcher := session.DispatcherFromContext(ctx)
+diff --git a/proxy/socks/server.go b/proxy/socks/server.go
+index 478410f3..b191e51a 100644
+--- a/proxy/socks/server.go
++++ b/proxy/socks/server.go
+@@ -130,10 +130,11 @@ func (s *Server) processTCP(ctx context.Context, conn stat.Connection, dispatche
+ 	if err != nil {
+ 		if inbound.Source.IsValid() {
+ 			log.Record(&log.AccessMessage{
+-				From:   inbound.Source,
+-				To:     "",
+-				Status: log.AccessRejected,
+-				Reason: err,
++				From:       inbound.Source,
++				To:         "",
++				Status:     log.AccessRejected,
++				Reason:     err,
++				InboundTag: inbound.Tag,
+ 			})
+ 		}
+ 		return errors.New("failed to read request").Base(err)
+@@ -151,10 +152,11 @@ func (s *Server) processTCP(ctx context.Context, conn stat.Connection, dispatche
+ 		errors.LogInfo(ctx, "TCP Connect request to ", dest)
+ 		if inbound.Source.IsValid() {
+ 			ctx = log.ContextWithAccessMessage(ctx, &log.AccessMessage{
+-				From:   inbound.Source,
+-				To:     dest,
+-				Status: log.AccessAccepted,
+-				Reason: "",
++				From:       inbound.Source,
++				To:         dest,
++				Status:     log.AccessAccepted,
++				Reason:     "",
++				InboundTag: inbound.Tag,
+ 			})
+ 		}
+ 		if inbound.CanSpliceCopy == 2 {
+@@ -254,10 +256,11 @@ func (s *Server) handleUDPPayload(ctx context.Context, conn stat.Connection, dis
+ 			errors.LogDebug(ctx, "send packet to ", destination, " with ", payload.Len(), " bytes")
+ 			if inbound != nil && inbound.Source.IsValid() {
+ 				currentPacketCtx = log.ContextWithAccessMessage(ctx, &log.AccessMessage{
+-					From:   inbound.Source,
+-					To:     destination,
+-					Status: log.AccessAccepted,
+-					Reason: "",
++					From:       inbound.Source,
++					To:         destination,
++					Status:     log.AccessAccepted,
++					Reason:     "",
++					InboundTag: inbound.Tag,
+ 				})
+ 			}
+ 
+diff --git a/proxy/trojan/server.go b/proxy/trojan/server.go
+index d66219c4..bccfc7b2 100644
+--- a/proxy/trojan/server.go
++++ b/proxy/trojan/server.go
+@@ -168,6 +168,7 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
+ 	}
+ 
+ 	var user *protocol.MemoryUser
++	inbound := session.InboundFromContext(ctx)
+ 
+ 	napfb := s.fallbacks
+ 	isfb := napfb != nil
+@@ -177,10 +178,11 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
+ 		// invalid protocol
+ 		err = errors.New("not trojan protocol")
+ 		log.Record(&log.AccessMessage{
+-			From:   conn.RemoteAddr(),
+-			To:     "",
+-			Status: log.AccessRejected,
+-			Reason: err,
++			From:       conn.RemoteAddr(),
++			To:         "",
++			Status:     log.AccessRejected,
++			Reason:     err,
++			InboundTag: inbound.Tag,
+ 		})
+ 
+ 		shouldFallback = true
+@@ -190,10 +192,11 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
+ 			// invalid user, let's fallback
+ 			err = errors.New("not a valid user")
+ 			log.Record(&log.AccessMessage{
+-				From:   conn.RemoteAddr(),
+-				To:     "",
+-				Status: log.AccessRejected,
+-				Reason: err,
++				From:       conn.RemoteAddr(),
++				To:         "",
++				Status:     log.AccessRejected,
++				Reason:     err,
++				InboundTag: inbound.Tag,
+ 			})
+ 
+ 			shouldFallback = true
+@@ -209,10 +212,11 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
+ 	clientReader := &ConnReader{Reader: bufferedReader}
+ 	if err := clientReader.ParseHeader(); err != nil {
+ 		log.Record(&log.AccessMessage{
+-			From:   conn.RemoteAddr(),
+-			To:     "",
+-			Status: log.AccessRejected,
+-			Reason: err,
++			From:       conn.RemoteAddr(),
++			To:         "",
++			Status:     log.AccessRejected,
++			Reason:     err,
++			InboundTag: inbound.Tag,
+ 		})
+ 		return errors.New("failed to create request from: ", conn.RemoteAddr()).Base(err)
+ 	}
+@@ -222,7 +226,7 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
+ 		return errors.New("unable to set read deadline").Base(err).AtWarning()
+ 	}
+ 
+-	inbound := session.InboundFromContext(ctx)
++	inbound = session.InboundFromContext(ctx)
+ 	inbound.Name = "trojan"
+ 	inbound.CanSpliceCopy = 3
+ 	inbound.User = user
+@@ -233,11 +237,12 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
+ 	}
+ 
+ 	ctx = log.ContextWithAccessMessage(ctx, &log.AccessMessage{
+-		From:   conn.RemoteAddr(),
+-		To:     destination,
+-		Status: log.AccessAccepted,
+-		Reason: "",
+-		Email:  user.Email,
++		From:       conn.RemoteAddr(),
++		To:         destination,
++		Status:     log.AccessAccepted,
++		Reason:     "",
++		Email:      user.Email,
++		InboundTag: inbound.Tag,
+ 	})
+ 
+ 	errors.LogInfo(ctx, "received request for ", destination)
+diff --git a/proxy/tun/handler.go b/proxy/tun/handler.go
+index 1e8e030e..cf78499a 100644
+--- a/proxy/tun/handler.go
++++ b/proxy/tun/handler.go
+@@ -153,6 +153,7 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
+ 		To:     destination,
+ 		Status: log.AccessAccepted,
+ 		Reason: "",
++		InboundTag: inbound.Tag,
+ 	})
+ 	errors.LogInfo(ctx, "processing from ", source, " to ", destination)
+ 
+diff --git a/proxy/vless/inbound/inbound.go b/proxy/vless/inbound/inbound.go
+index 02dc947d..b3ac92ef 100644
+--- a/proxy/vless/inbound/inbound.go
++++ b/proxy/vless/inbound/inbound.go
+@@ -512,12 +512,14 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
+ 			return nil
+ 		}
+ 
++		inbound := session.InboundFromContext(ctx)
+ 		if errors.Cause(err) != io.EOF {
+ 			log.Record(&log.AccessMessage{
+ 				From:   connection.RemoteAddr(),
+ 				To:     "",
+ 				Status: log.AccessRejected,
+ 				Reason: err,
++				InboundTag: inbound.Tag,
+ 			})
+ 			err = errors.New("invalid request from ", connection.RemoteAddr()).Base(err).AtInfo()
+ 		}
+@@ -604,6 +606,7 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
+ 			Status: log.AccessAccepted,
+ 			Reason: "",
+ 			Email:  request.User.Email,
++			InboundTag: inbound.Tag,
+ 		})
+ 	} else if account.Flow == vless.XRV {
+ 		ctx = session.ContextWithAllowedNetwork(ctx, net.Network_UDP)
+diff --git a/proxy/vmess/inbound/inbound.go b/proxy/vmess/inbound/inbound.go
+index 6a8591ad..087535cc 100644
+--- a/proxy/vmess/inbound/inbound.go
++++ b/proxy/vmess/inbound/inbound.go
+@@ -239,12 +239,14 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
+ 	svrSession := encoding.NewServerSession(h.clients, h.sessionHistory)
+ 	request, err := svrSession.DecodeRequestHeader(reader, isDrain)
+ 	if err != nil {
++		inbound := session.InboundFromContext(ctx)
+ 		if errors.Cause(err) != io.EOF {
+ 			log.Record(&log.AccessMessage{
+-				From:   connection.RemoteAddr(),
+-				To:     "",
+-				Status: log.AccessRejected,
+-				Reason: err,
++				From:       connection.RemoteAddr(),
++				To:         "",
++				Status:     log.AccessRejected,
++				Reason:     err,
++				InboundTag: inbound.Tag,
+ 			})
+ 			err = errors.New("invalid request from ", connection.RemoteAddr()).Base(err).AtInfo()
+ 		}
+@@ -252,12 +254,14 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
+ 	}
+ 
+ 	if request.Command != protocol.RequestCommandMux {
++		inbound := session.InboundFromContext(ctx)
+ 		ctx = log.ContextWithAccessMessage(ctx, &log.AccessMessage{
+-			From:   connection.RemoteAddr(),
+-			To:     request.Destination(),
+-			Status: log.AccessAccepted,
+-			Reason: "",
+-			Email:  request.User.Email,
++			From:       connection.RemoteAddr(),
++			To:         request.Destination(),
++			Status:     log.AccessAccepted,
++			Reason:     "",
++			Email:      request.User.Email,
++			InboundTag: inbound.Tag,
+ 		})
+ 	}
+ 
+diff --git a/proxy/wireguard/server.go b/proxy/wireguard/server.go
+index 1f358a38..d7064ec0 100644
+--- a/proxy/wireguard/server.go
++++ b/proxy/wireguard/server.go
+@@ -156,6 +156,7 @@ func (s *Server) forwardConnection(dest net.Destination, conn net.Conn) {
+ 		To:     dest,
+ 		Status: log.AccessAccepted,
+ 		Reason: "",
++		InboundTag: inbound.Tag,
+ 	})
+ 
+ 	err := s.info.dispatcher.DispatchLink(ctx, dest, &transport.Link{
