@@ -5,7 +5,7 @@ green='\033[0;32m'
 yellow='\033[0;33m'
 plain='\033[0m'
 
-XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n5-ui/v0.2.0}"
+XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n5-ui/main}"
 XUI_LOCAL_INSTALL_SCRIPT="/usr/local/x-ui/install.sh"
 XUI_LOCAL_SHELL_SCRIPT="/usr/local/x-ui/x-ui.sh"
 XUI_BBR_URL="${XUI_BBR_URL:-${XUI_RAW_BASE}/scripts/bbr.sh}"
@@ -158,9 +158,20 @@ uninstall() {
         fi
         return 0
     fi
+    systemctl disable --now xui-portlimit-sync.timer 2>/dev/null || true
+    systemctl stop xui-portlimit-sync.service 2>/dev/null || true
     systemctl stop x-ui
     systemctl disable x-ui
     rm /etc/systemd/system/x-ui.service -f
+    rm /etc/systemd/system/xui-portlimit-sync.service -f
+    rm /etc/systemd/system/xui-portlimit-sync.timer -f
+    rm /usr/local/bin/xui-portlimit-sync.sh -f
+    rm /etc/systemd/system/x-ui.service.d/10-iptables-shim.conf -f
+    rmdir /etc/systemd/system/x-ui.service.d 2>/dev/null || true
+    rm /etc/logrotate.d/x-ui-xray-access -f
+    if command -v nft >/dev/null 2>&1 && nft list table inet xui_auto_portlimit >/dev/null 2>&1; then
+        nft delete table inet xui_auto_portlimit
+    fi
     systemctl daemon-reload
     systemctl reset-failed
     rm /etc/x-ui/ -rf
