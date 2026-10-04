@@ -569,7 +569,7 @@ install_x-ui() {
         rm -rf /usr/local/x-ui/
     fi
 
-    if [[ -n "${local_source_dir}" ]]; then
+    if [[ "${INSTALL_MODE}" == "source" && -n "${local_source_dir}" ]]; then
         echo -e "install source: local source ${local_source_dir}"
         if ! cp -a "${local_source_dir}" /usr/local/x-ui; then
             error_exit "复制本地源码到 /usr/local/x-ui 失败。"
