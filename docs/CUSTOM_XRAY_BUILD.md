@@ -29,7 +29,7 @@ From the N5 repository root:
 runtime/custom-xray/reconstruct.sh /tmp/n5-custom-xray-26.5.3
 ```
 
-The script checks out exact upstream commit `228f1e13...`, verifies the patch with `git apply --check`, applies it, and requires the resulting Git tree to equal `94bed1ef...`.
+The script checks out exact upstream commit `228f1e13...`, verifies the patch with `git apply --check`, applies it, and requires the resulting Git tree to equal `94bed1ef...`. It then creates and verifies deterministic reconstructed commit `6ed7a248...`. This commit is a reproducible build input, not a claim about the missing historical custom commit.
 
 ## Build
 
@@ -43,7 +43,7 @@ runtime/custom-xray/build.sh \
   /opt/go1.26.0/bin/go
 ```
 
-The build script rejects unsupported architectures, a non-Go-1.26.0 toolchain, or a source tree other than the recovered N5 tree. For a freshly patched standalone checkout it computes the complete worktree tree through an isolated temporary Git index, so the source does not need an artificial provenance commit. It always builds with CGO enabled.
+The build script rejects unsupported architectures, a non-Go-1.26.0 toolchain, or a source tree other than the recovered N5 tree. It computes the complete worktree tree through an isolated temporary Git index and always builds with CGO enabled. Formal candidates use the deterministic reconstructed commit so Go VCS metadata and BuildID are repeatable.
 
 The same script accepts `amd64` for reproducibility experiments. It does not authorize replacing the immutable AMD64 Golden runtime.
 

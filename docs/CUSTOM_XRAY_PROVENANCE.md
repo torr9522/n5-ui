@@ -10,7 +10,13 @@ The recovered source is the `xray-core/` snapshot first imported into N5 and ret
 94bed1effd3c690b45b1b2978566d710b08723d6
 ```
 
-The reconstructed local commit created during the ARM64 work is recorded in `docs/N5_ARM64.md`. That commit is an evidence artifact; the canonical, portable provenance is the upstream commit plus patch in this repository.
+The reconstructed provenance commit created during the ARM64 work is:
+
+```text
+6ed7a248b8e21940f365ceeffcc4e53bb42eb1f3
+```
+
+This is not the lost historical custom commit. It is a deterministic commit made from the recovered tree with documented reconstruction identity, timestamp, parent, and message. `reconstruct.sh` recreates and verifies it. The canonical portable evidence remains the upstream commit plus patch in this repository.
 
 ## Upstream Base
 
@@ -89,4 +95,3 @@ VCS modified: true
 ```
 
 The official upstream ARM64 asset is not equivalent to this custom source and must not be used as an N5 runtime.
-
