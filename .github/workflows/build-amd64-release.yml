@@ -26,6 +26,8 @@ jobs:
             ca-certificates curl file gcc git libc6-dev rsync tar unzip zip
 
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Trust the container-mounted checkout
         run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
