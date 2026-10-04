@@ -50,4 +50,41 @@ Local package assets are preferred. The default remote base is GitHub `releases/
 
 ## Reconstructed Provenance
 
-The historical Custom Xray commit was not found. See `docs/CUSTOM_XRAY_PROVENANCE.md` for the exact upstream base, recovered delta, canonical patch, and Golden AMD64 constraints. Validation results and final candidate checksums are appended to this document after the formal build and installation tests.
+The historical Custom Xray commit was not found. See `docs/CUSTOM_XRAY_PROVENANCE.md` for the exact upstream base, recovered delta, canonical patch, and Golden AMD64 constraints.
+
+## Validation Baseline
+
+The ARM64 candidate was built natively, without QEMU, in a Debian 11 ARM64
+builder using glibc 2.31, GCC 10.2.1, Go 1.26.0, and `CGO_ENABLED=1`.
+The following release gates passed on an Ubuntu 24.04 ARM64 installation host:
+
+- the canonical patch applies to the exact upstream commit and recreates the
+  recovered Custom Xray source tree;
+- repeated Custom Xray builds from the reconstructed commit are byte-identical;
+- the Custom Xray and panel Go test suites pass;
+- the Custom Xray binary is native AArch64, accepts the installed configuration,
+  and preserves the ordinary and VMess mux `[inbound-tag]` access-log paths;
+- source-mode and package-mode installations select only ARM64 panel and runtime
+  assets;
+- the panel, API, static assets, login flow, database integrity, port-limit
+  timer, N5 nftables table, systemd restart, runtime updater, routing, and a real
+  HTTP proxy request pass;
+- the access log, parser, database record, API, and browser-rendered Access IP
+  page agree on the generated `inbound-<port>` identity.
+
+Final candidate checksums and complete command evidence belong in the release
+manifest and implementation report, not this packaged source document. This
+avoids making the package checksum depend on a checksum embedded inside the
+package itself.
+
+## Known Limits
+
+- No external client or UDP protocol matrix was run. The network acceptance test
+  used a real TCP request from the installation host, while VMess mux was tested
+  separately against the native Custom Xray binary.
+- A real operating-system reboot was intentionally not performed because the
+  development session ran on the validation host. An explicit systemd restart
+  and service recovery test passed.
+- The ARM64 assets remain local release candidates until reviewed and published.
+  The installer and updater therefore require a controlled local mirror during
+  pre-release installation tests.
