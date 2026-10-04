@@ -2,6 +2,9 @@ name: Build AMD64 release package
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
