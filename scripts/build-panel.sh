@@ -38,4 +38,3 @@ mkdir -p "$(dirname "${output}")"
 
 echo "panel source: $(git -C "${repo_root}" rev-parse HEAD)"
 echo "output: ${output}"
-

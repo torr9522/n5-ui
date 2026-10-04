@@ -60,4 +60,3 @@ tar --sort=name --mtime="@${source_date_epoch}" --owner=0 --group=0 --numeric-ow
     -C "${stage}" -cf - x-ui | gzip -n -9 >"${package}"
 
 sha256sum "${package}"
-
