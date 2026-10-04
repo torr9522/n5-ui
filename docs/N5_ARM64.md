@@ -56,7 +56,9 @@ The historical Custom Xray commit was not found. See `docs/CUSTOM_XRAY_PROVENANC
 
 The ARM64 candidate was built natively, without QEMU, in a Debian 11 ARM64
 builder using glibc 2.31, GCC 10.2.1, Go 1.26.0, and `CGO_ENABLED=1`.
-The following release gates passed on an Ubuntu 24.04 ARM64 installation host:
+The implementation gates first passed on an Ubuntu 24.04 ARM64 development
+host. Final Stable acceptance then passed on an independent clean Debian 12
+ARM64 server:
 
 - the canonical patch applies to the exact upstream commit and recreates the
   recovered Custom Xray source tree;
@@ -71,20 +73,25 @@ The following release gates passed on an Ubuntu 24.04 ARM64 installation host:
   HTTP proxy request pass;
 - the access log, parser, database record, API, and browser-rendered Access IP
   page agree on the generated `inbound-<port>` identity.
+- GitHub-hosted RC and Stable source/package clean installs passed;
+- external VMess, VLESS, Legacy Shadowsocks, and Trojan TCP passed;
+- external Legacy Shadowsocks UDP DNS passed;
+- the GitHub updater selected the ARM64 asset and fetched no AMD64 asset;
+- both the RC package and official Stable package survived real OS reboots;
+- public source, tag, assets, installer, and checksums passed disaster readback.
 
 Final candidate checksums and complete command evidence belong in the release
 manifest and implementation report, not this packaged source document. This
 avoids making the package checksum depend on a checksum embedded inside the
 package itself.
 
-## Known Limits
+## Stable Acceptance
 
-- No external client or UDP protocol matrix was run. The network acceptance test
-  used a real TCP request from the installation host, while VMess mux was tested
-  separately against the native Custom Xray binary.
-- A real operating-system reboot was intentionally not performed because the
-  development session ran on the validation host. An explicit systemd restart
-  and service recovery test passed.
-- The ARM64 assets remain local release candidates until reviewed and published.
-  The installer and updater therefore require a controlled local mirror during
-  pre-release installation tests.
+ARM64 became a published Stable architecture in `v0.3.0`. The complete
+independent clean-server, external-client, updater, reboot, and public-readback
+record is in `docs/history/N5_V0.3.0_ARM64_STABLE.md`.
+
+The original historical Custom Xray commit remains unknown. The documented
+reconstructed commit is a reproducible provenance identity, not a claim about
+lost history. Clean install is supported; the release does not broaden the
+existing in-place upgrade guarantee.
