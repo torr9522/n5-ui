@@ -27,6 +27,9 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Trust the container-mounted checkout
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
       - name: Install verified Go 1.26.0
         run: |
           curl -fL --retry 3 -o /tmp/go.tar.gz \
