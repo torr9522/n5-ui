@@ -168,6 +168,9 @@ display_menu(){
 }
 
 get_latest_version() {
+    if [[ "$(uname -m)" != "x86_64" && "$(uname -m)" != "amd64" ]]; then
+        _error "The bundled Ubuntu mainline-kernel installer only supports amd64. It is disabled on this architecture."
+    fi
     latest_version=($(wget -qO- https://kernel.ubuntu.com/~kernel-ppa/mainline/ | awk -F'\"v' '/v[4-9]./{print $2}' | cut -d/ -f1 | grep -v - | sort -V))
     [ ${#latest_version[@]} -eq 0 ] && _error "Get latest kernel version failed."
     kernel_arr=()
