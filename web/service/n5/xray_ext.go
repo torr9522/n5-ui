@@ -3,11 +3,15 @@ package n5
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"x-ui/database"
 	legacyModel "x-ui/database/model"
 	n5model "x-ui/database/model/n5"
+	"x-ui/logger"
+
+	"gorm.io/gorm"
 )
 
 type XrayExtService struct {
@@ -127,6 +131,11 @@ func (s *XrayExtService) GenerateRoutingFragments() (map[string]interface{}, err
 		}
 		inbound := &legacyModel.Inbound{}
 		if err := db.Model(&legacyModel.Inbound{}).Where("id = ?", binding.InboundId).First(inbound).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// Restored databases can contain historical bindings whose inbound no longer exists.
+				logger.Warningf("skip dangling traffic policy binding: binding_id=%d inbound_id=%d policy_id=%d", binding.Id, binding.InboundId, binding.PolicyId)
+				continue
+			}
 			return nil, err
 		}
 		if inbound.Tag == "" {

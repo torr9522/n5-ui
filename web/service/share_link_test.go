@@ -2,12 +2,55 @@ package service
 
 import (
 	"encoding/base64"
+	"net/url"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v2"
 	"x-ui/database/model"
 )
+
+func TestRealityBackendUsesFirstNonEmptyServerName(t *testing.T) {
+	inbound := createVLESSRealityTCPInbound(31005, "reality-history")
+	inbound.StreamSettings = strings.Replace(
+		inbound.StreamSettings,
+		`"serverNames":["reality.example.com"]`,
+		`"serverNames":["   ","www.microsoft.com"]`,
+		1,
+	)
+	svc := &ShareLinkService{}
+	parsed, err := svc.parseInbound(inbound)
+	if err != nil {
+		t.Fatalf("parse reality inbound failed: %v", err)
+	}
+
+	for _, address := range []string{"domain.test", "198.51.100.10"} {
+		link, err := svc.buildVLESSLink(parsed, address)
+		if err != nil {
+			t.Fatalf("build reality link for %s failed: %v", address, err)
+		}
+		u, err := url.Parse(link)
+		if err != nil {
+			t.Fatalf("parse reality link failed: %v", err)
+		}
+		if got := u.Query().Get("sni"); got != "www.microsoft.com" {
+			t.Fatalf("unexpected URL SNI for %s: %q", address, got)
+		}
+
+		clashService := &ShareLinkService{
+			loadShareAddresses: func() ([]ShareAddress, error) {
+				return []ShareAddress{{Id: "test", Address: address, Enabled: true}}, nil
+			},
+		}
+		proxy, err := clashService.buildClashProxy(parsed, shareContext{})
+		if err != nil {
+			t.Fatalf("build Clash proxy for %s failed: %v", address, err)
+		}
+		if got := proxy["servername"]; got != "www.microsoft.com" {
+			t.Fatalf("unexpected Clash SNI for %s: %#v", address, got)
+		}
+	}
+}
 
 func TestShareLinkServiceProtocolMatrixAndRealitySafety(t *testing.T) {
 	inbounds := []*model.Inbound{

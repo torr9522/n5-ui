@@ -11,6 +11,64 @@ import (
 	n5service "x-ui/web/service/n5"
 )
 
+func TestRestoredDatabaseWithDanglingBindingsStillGeneratesXrayConfig(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "restored-orphan.db")
+	if err := database.InitDB(dbPath); err != nil {
+		t.Fatalf("init fixture db failed: %v", err)
+	}
+	egress, err := (&n5service.EgressService{}).Create(&n5model.Egress{
+		Name:         "restored-egress",
+		Protocol:     "freedom",
+		Enabled:      true,
+		OutboundJSON: `{"protocol":"freedom","settings":{}}`,
+	})
+	if err != nil {
+		t.Fatalf("create restored egress failed: %v", err)
+	}
+	policy, err := (&n5service.TrafficPolicyService{}).Create(&n5model.TrafficPolicy{
+		Name:              "restored-policy",
+		Enabled:           true,
+		DefaultTargetType: "egress",
+		DefaultTargetId:   egress.Id,
+	})
+	if err != nil {
+		t.Fatalf("create restored policy failed: %v", err)
+	}
+	for _, inboundID := range []int{4, 6, 7, 8} {
+		if err := database.GetDB().Create(&n5model.TrafficPolicyBinding{
+			InboundId: inboundID, PolicyId: policy.Id, Enabled: true,
+		}).Error; err != nil {
+			t.Fatalf("create restored dangling binding failed: %v", err)
+		}
+	}
+	if err := (&SettingService{}).setString("n5XrayExtensionEnable", "true"); err != nil {
+		t.Fatalf("enable N5 extension failed: %v", err)
+	}
+	sqlDB, err := database.GetDB().DB()
+	if err != nil {
+		t.Fatalf("get fixture sql db failed: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close fixture db failed: %v", err)
+	}
+
+	// Reopening the copied database exercises the same AutoMigrate path used after
+	// replacing /etc/x-ui/x-ui.db during a real restore.
+	if err := database.InitDB(dbPath); err != nil {
+		t.Fatalf("open restored db failed: %v", err)
+	}
+	cfg, mergeResult, err := (&XrayService{}).getXrayConfigWithMeta()
+	if err != nil {
+		t.Fatalf("restored dangling db failed config generation: %v", err)
+	}
+	if cfg == nil || mergeResult == nil {
+		t.Fatalf("restored dangling db did not produce merged config: cfg=%v merge=%v", cfg, mergeResult)
+	}
+	if mergeResult.RoutingRuleCount != 0 {
+		t.Fatalf("dangling bindings generated routing rules: %#v", mergeResult)
+	}
+}
+
 func initServiceTestDB(t *testing.T) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "service-test.db")
