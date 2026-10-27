@@ -26,16 +26,16 @@ Read these files in order:
 
 ## Current Stable Baseline
 
-- Stable tag: `v0.3.0`
-- Release commit: `d3485173b11b80c29acddfd800f377392d8b68ef`
-- Release tree: `56e5d69876fef102f3d8289c141c52935d723f90`
-- Annotated tag object: `aa0ee94880c8d085d889790547697ac3dcbbc9bd`
+- Stable tag: `v0.3.1`
+- Release commit: `d0e782fc31ff726baf0556e8add9333b14522527`
+- Release tree: `0e54b2830773bcf3a32c4fc81e6c004812ce81e0`
+- Annotated tag object: `b82f91a18a953414fce80d00afbe04c0d1da1a59`
 - Custom Xray baseline: `26.5.3`, amd64 and arm64
 - AMD64 Golden Xray SHA256:
   `128f9c34811ee74b3770eef7010d011e3946e85dfab28f2ed1804e380461b05e`
 - ARM64 Custom Xray SHA256:
   `2f59c045ff47d588edd16738d9761fe706b129a373088b4a7db0b9a936dd41ed`
-- Full Stable acceptance: `docs/history/N5_V0.3.0_ARM64_STABLE.md`
+- Full Stable acceptance: `docs/history/N5_V0.3.1_STABLE.md`
 
 ## Release Policy
 
@@ -48,7 +48,7 @@ Read these files in order:
 
 ## Operating Principles
 
-1. Continue development from current `main`; use `v0.3.0` to reproduce release
+1. Continue development from current `main`; use `v0.3.1` to reproduce release
    code and assets.
 2. Treat any deployment host as TEST/UAT only unless a separate source-of-truth
    migration is explicitly performed.
@@ -59,14 +59,14 @@ Read these files in order:
 6. Before the next Stable release, repeat clean install, browser, external TCP,
    external UDP, updater, reboot, runtime, and DB consistency gates.
 7. Never move or recreate an existing Stable tag.
-8. If a published Stable has a bug, fix it in a new version such as `v0.3.1`.
+8. If a published Stable has a bug, fix it in a new version such as `v0.3.2`.
 
 ## Fast Checks
 
 ```bash
-git checkout v0.3.0
-git rev-list -n 1 v0.3.0
-git cat-file -t v0.3.0
+git checkout v0.3.1
+git rev-list -n 1 v0.3.1
+git cat-file -t v0.3.1
 go test ./...
 go build ./...
 go vet ./...
@@ -77,7 +77,7 @@ go test -race ./web/service/n5/... ./web/controller/n5/...
 Expected Stable commit:
 
 ```text
-d3485173b11b80c29acddfd800f377392d8b68ef
+d0e782fc31ff726baf0556e8add9333b14522527
 ```
 
 For the full historical map, read `docs/history/09_CHECKPOINT_MAP.md` and

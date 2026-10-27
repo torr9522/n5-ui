@@ -1,7 +1,7 @@
 # N5-UI Public Development History
 
 This directory is the public, redacted handoff archive for the N5-UI path from
-the early fork state through `v0.3.0` Stable.
+the early fork state through `v0.3.1` Stable.
 
 It is intentionally a summary archive. Raw UAT logs, databases, browser traces,
 server addresses, credentials, tokens, and private runtime evidence are not
@@ -25,17 +25,21 @@ published.
 14. `13_SOURCE_INVENTORY.md`
 15. `14_NEW_CODEX_RECOVERY_TEST.md`
 16. `N5_V0.3.0_ARM64_STABLE.md`
+17. `N5_V0.3.1_STABLE.md`
 
 Machine-readable checkpoint data is in `checkpoints.json`.
 
 ## Stable Summary
 
-- Current Stable: `v0.3.0`
-- Release commit: `d3485173b11b80c29acddfd800f377392d8b68ef`
-- Release tree: `56e5d69876fef102f3d8289c141c52935d723f90`
+- Current Stable: `v0.3.1`
+- Release commit: `d0e782fc31ff726baf0556e8add9333b14522527`
+- Release tree: `0e54b2830773bcf3a32c4fc81e6c004812ce81e0`
 - Xray runtime: Custom `26.5.3`, amd64 and arm64
 - ARM64 acceptance: independent Debian 12 clean install, external TCP/UDP,
   Access IP, updater, browser, DB, routing, and real reboot passed.
+- v0.3.1 acceptance: AMD64 clean RC/Stable source and package installs,
+  restored historical DB tolerance, REALITY export, routing, Access IP, and
+  real reboot passed; dual-architecture packages and frozen runtimes passed.
 - Upgrade policy: clean install supported; in-place upgrade not guaranteed.
 
 ## Public Checkpoint Tags
